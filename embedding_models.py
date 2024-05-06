@@ -22,7 +22,7 @@ import whisper
 from jiwer import wer
 import hydra
 
-from generate_data import generate_parler_tts, generate_hifigan, generate_xtts, N_SAMPLES
+from generate_data import generate_parler_tts, generate_hifigan, generate_xtts, generate_ref_test, generate_ref_dev, N_SAMPLES
 from frechet_distance import frechet_distance
 from dvector.wav2mel import Wav2Mel
 
@@ -53,6 +53,7 @@ class EmbeddingModel(ABC):
     def get_mu_sigma(self, ds_name):
         noise = False
         prefix = self.__class__.__name__.lower()
+        Path("cache").mkdir(exist_ok=True, parents=True)
         if (Path("cache") / f"{prefix}_{ds_name}_mu.npy").exists():
             mu = np.load(Path("cache") / f"{prefix}_{ds_name}_mu.npy")
             sigma = np.load(Path("cache") / f"{prefix}_{ds_name}_sigma.npy")
@@ -72,6 +73,7 @@ class EmbeddingModel(ABC):
         noise = True
         ds_name = "noise"
         prefix = self.__class__.__name__.lower()
+        Path("cache").mkdir(exist_ok=True, parents=True)
         if (Path("cache") / f"{prefix}_{ds_name}_mu.npy").exists():
             mu = np.load(Path("cache") / f"{prefix}_{ds_name}_mu.npy")
             sigma = np.load(Path("cache") / f"{prefix}_{ds_name}_sigma.npy")
@@ -426,76 +428,3 @@ class Wav2Vec2WER(WERModel):
         predicted_ids = torch.argmax(logits, dim=-1)
         transcription = self.wav2vec2_processor.batch_decode(predicted_ids)
         return transcription[0]
-
-if __name__ == "__main__":
-    # mfcc = MFCC()
-    # print("MFCC")
-    # print("Reference test:", mfcc.get_frechet("reference.test"))
-    # print("Reference dev:", mfcc.get_frechet("reference.dev"))
-    # print("Parler:", mfcc.get_frechet("parler"))
-    # print("Hifigan:", mfcc.get_frechet("hifigan"))
-    # print("Xtts:", mfcc.get_frechet("xtts"))
-
-    # hubert = Hubert()
-    # print("Hubert")
-    # print("Reference test:", hubert.get_frechet("reference.test"))
-    # print("Reference dev:", hubert.get_frechet("reference.dev"))
-    # print("Parler:", hubert.get_frechet("parler"))
-    # print("Hifigan:", hubert.get_frechet("hifigan"))
-    # print("Xtts:", hubert.get_frechet("xtts"))
-
-    # wav2vec2 = Wav2Vec2()
-    # print("Wav2Vec2")
-    # print("Reference test:", wav2vec2.get_frechet("reference.test"))
-    # print("Reference dev:", wav2vec2.get_frechet("reference.dev"))
-    # print("Parler:", wav2vec2.get_frechet("parler"))
-    # print("Hifigan:", wav2vec2.get_frechet("hifigan"))
-    # print("Xtts:", wav2vec2.get_frechet("xtts"))
-
-    # dvector = DVector()
-    # print("DVector")
-    # print("Reference test:", dvector.get_frechet("reference.test"))
-    # print("Reference dev:", dvector.get_frechet("reference.dev"))
-    # print("Parler:", dvector.get_frechet("parler"))
-    # print("Hifigan:", dvector.get_frechet("hifigan"))
-    # print("Xtts:", dvector.get_frechet("xtts"))
-
-    # xvector = XVector()
-    # print("XVector")
-    # print("Reference test:", xvector.get_frechet("reference.test"))
-    # print("Reference dev:", xvector.get_frechet("reference.dev"))
-    # print("Parler:", xvector.get_frechet("parler"))
-    # print("Hifigan:", xvector.get_frechet("hifigan"))
-    # print("Xtts:", xvector.get_frechet("xtts"))
-
-    # miipher = Miipher()
-    # print("Miipher")
-    # print("Reference test:", miipher.get_frechet("reference.test"))
-    # print("Reference dev:", miipher.get_frechet("reference.dev"))
-    # print("Parler:", miipher.get_frechet("parler"))
-    # print("Hifigan:", miipher.get_frechet("hifigan"))
-    # print("Xtts:", miipher.get_frechet("xtts"))
-
-    voicefixer = Voicefixer("cpu")
-    print("Voicefixer")
-    print("Reference test:", voicefixer.get_frechet("reference.test"))
-    print("Reference dev:", voicefixer.get_frechet("reference.dev"))
-    print("Parler:", voicefixer.get_frechet("parler"))
-    print("Hifigan:", voicefixer.get_frechet("hifigan"))
-    print("Xtts:", voicefixer.get_frechet("xtts"))
-
-    # whisper = Whisper()
-    # print("Whisper")
-    # print("Reference test:", whisper.get_wasserstein("reference.test"))
-    # print("Reference dev:", whisper.get_wasserstein("reference.dev"))
-    # print("Parler:", whisper.get_wasserstein("parler"))
-    # print("Hifigan:", whisper.get_wasserstein("hifigan"))
-    # print("Xtts:", whisper.get_wasserstein("xtts"))
-
-    # wav2vec2_wer = Wav2Vec2WER()
-    # print("Wav2Vec2WER")
-    # print("Reference test:", wav2vec2_wer.get_wasserstein("reference.test"))
-    # print("Reference dev:", wav2vec2_wer.get_wasserstein("reference.dev"))
-    # print("Parler:", wav2vec2_wer.get_wasserstein("parler"))
-    # print("Hifigan:", wav2vec2_wer.get_wasserstein("hifigan"))
-    # print("Xtts:", wav2vec2_wer.get_wasserstein("xtts"))

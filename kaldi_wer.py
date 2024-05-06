@@ -13,8 +13,12 @@ import selectors
 from glob import glob
 from dotenv import load_dotenv
 from shutil import copy
+import pandas as pd
+from jiwer import wer as wer_score
+import numpy as np
+import builtins
 
-cpus = cpu_count()
+cpus = 16 #cpu_count()
 
 load_dotenv()
 
@@ -23,7 +27,6 @@ KALDI_PATH = os.environ.get("KALDI_PATH", "/kaldi")
 @dataclass
 class Args:
     kaldi_path: str = f"{KALDI_PATH}/egs/librispeech/s5"
-    data_path: str = "kaldi_data/"
     data_name: str = "LibriSpeech"
     lm_path: str = "{data}/local/lm"
     dict_path: str = "{data}/local/dict"
@@ -34,12 +37,9 @@ class Args:
     lang_nosp_tmp_path: str = "{data}/local/lang_tmp_nosp"
     lm_url: str = "www.openslr.org/resources/11"
     log_file: str = "train.log"
-    test_sets: str = "dev_clean,test_clean"
-    local_data_path: str = "data"
+    local_data_path: str = "kaldi_data"
     local_exp_path: str = "exp"
     mfcc_path: str = "{data}/mfcc"
-    train_name: str = "synth"
-    train_set: str = "n_topline"
     train_cmd: str = "run.pl"
     lm_names: str = "tgsmall,tgmed"  # tglarge,fglarge
     mfcc_path: str = "{exp}/make_mfcc"
@@ -52,23 +52,63 @@ class Args:
     log_stages: str = "all"
     tdnn_path: str = "{exp}/tdnn"
     verbose: bool = True
-    run_name: str = None
     clean_stages: str = "none"
     use_cmvn: bool = False
     use_cnn: bool = False
 
 args = Args()
 
+def print(*pargs, **kwargs):
+    if args.verbose:
+        builtins.print(*pargs, **kwargs)
+    else:
+        # log to "kaldi_data/kaldi.log"
+        with open(args.local_data_path / "kaldi.log", "a") as f:
+            builtins.print(*pargs, **kwargs, file=f)
+
+cache_dir = Path("cache")
+cache_dir.mkdir(exist_ok=True)
+
 def prepare_data():
     for directory in Path("data").iterdir():
         if directory.is_dir():
-            target_dir = Path(args.data_path) / directory.name
-            for wav in tqdm(list(directory.glob("*.wav"))):
-                speaker_dir = target_dir / wav.name.split("_")[0]
-                speaker_dir.mkdir(exist_ok=True)
-                txt = str(wav).replace(".wav", ".txt")
-                copy(txt, target / wav.parent.name / Path(txt).name)
-                copy(wav, speaker_dir / wav.name)
+            data_dict = {"speaker": [], "id": [], "wav": [], "text": []}
+            dest = Path(args.local_data_path) / directory.name
+            dest.mkdir(parents=True, exist_ok=True)
+            for wav in directory.rglob("*.wav"):
+                data_dict["speaker"].append(wav.name.split("_")[0])
+                data_dict["id"].append(
+                    wav.name.replace(".wav", "").replace("_", "-")
+                )
+                data_dict["wav"].append(str(wav))
+                with open(str(wav).replace(".wav", ".txt"), "r") as txt:
+                    text = txt.read().upper()
+                    text = " ".join(re.findall(r"\w+\'\w+|\w+", text)).strip()
+                    data_dict["text"].append(text)
+            df = pd.DataFrame(data_dict)
+            # spk2utt
+            with open(Path(dest) / "spk2utt", "w") as spk2utt:
+                for spk in sorted(df["speaker"].unique()):
+                    utts = df[df["speaker"] == spk]["id"].unique()
+                    utts = sorted([f"{utt}" for utt in utts])
+                    spk2utt.write(f'{spk} {" ".join(utts)}\n')
+            # text
+            with open(Path(dest) / "text", "w") as text_file:
+                for utt in sorted(df["id"].unique()):
+                    text = df[df["id"] == utt]["text"].values[0]
+                    text_file.write(f"{utt} {text}\n")
+            # utt2spk
+            with open(Path(dest) / "utt2spk", "w") as utt2spk:
+                for spk in sorted(df["speaker"].unique()):
+                    utts = df[df["speaker"] == spk]["id"].unique()
+                    for utt in sorted(utts):
+                        utt2spk.write(f"{utt} {spk}\n")
+            # wav.scp
+            with open(Path(dest) / "wav.scp", "w") as wavscp:
+                for utt in sorted(df["id"].unique()):
+                    wav = df[df["id"] == utt]["wav"].values[0]
+                    wav = Path(wav).resolve()
+                    wavscp.write(f"{utt} sox {wav} -t wav -c 1 -b 16 -t wav - rate 16000 |\n")
 
 class Tasks:
     def __init__(self, logfile, kaldi_path):
@@ -133,21 +173,19 @@ class Tasks:
                     os.remove(c_p)
             run_command = True
         if run_command:
-            if desc is None:
-                desc = "[bright_black]" + command + "[/bright_black]"
-            with console.status(desc):
-                if run_in_kaldi:
-                    for path in self.execute(command, cwd=self.kaldi_path):
-                        if args.verbose:
-                            print(path, end="")
-                elif run_in is None:
-                    for path in self.execute(command):
-                        if args.verbose:
-                            print(path, end="")
-                else:
-                    for path in self.execute(command, cwd=run_in):
-                        if args.verbose:
-                            print(path, end="")
+            print(command)
+            if run_in_kaldi:
+                for path in self.execute(command, cwd=self.kaldi_path):
+                    if args.verbose:
+                        print(path, end="")
+            elif run_in is None:
+                for path in self.execute(command):
+                    if args.verbose:
+                        print(path, end="")
+            else:
+                for path in self.execute(command, cwd=run_in):
+                    if args.verbose:
+                        print(path, end="")
             print(f"[green]✓[/green] {desc}")
         else:
             if not isinstance(check_path, list):
@@ -156,16 +194,11 @@ class Tasks:
                 print(f"[blue]{p} already exists[blue]")
 
 
-def score_model(task, args, path, name, fmllr=False, lang_nosp=True):
-    global run_name
-    if args.run_name is not None:
-        run_name = args.run_name
+def score_model(task, args, path, name, test_set, fmllr=False, lang_nosp=True):
     if args.log_stages == "all" or name in args.log_stages.split(","):
         print(
             {
                 "model": name,
-                "group_name": run_name,
-                "train_set": args.train_set
             }
         )
         mkgraph_args = ""
@@ -181,55 +214,69 @@ def score_model(task, args, path, name, fmllr=False, lang_nosp=True):
                 f"utils/mkgraph.sh {mkgraph_args} {str(args.lang_path) + '_test_tgsmall'} {path} {graph_path}",
                 graph_path,
             )
-        for i, tst in enumerate(args.test_sets):
-            graph_test_path = str(graph_path) + f"_{tst}"
-            tst_path = args.local_data_path / (tst + "_small")
-            # tst_path = args.local_data_path / (tst + "_med")
-            if fmllr:
-                p_decode = "_fmllr"
-            else:
-                p_decode = ""
-            task.run(
-                f"steps/decode{p_decode}.sh --lattice-beam 2.0 --nj {cpus} --cmd {args.train_cmd} {graph_path} {tst_path} {graph_test_path}",
-                graph_test_path,
-            )
-            scoring_path = Path(graph_test_path) / "scoring_kaldi"
-            task.run(
-                f"steps/scoring/score_kaldi_wer.sh {tst_path} {graph_path} {graph_test_path}",
-                scoring_path,
-            )
-            with open(scoring_path / "best_wer", "r") as best_wer:
-                best_wer = best_wer.read()
-            wer = float(re.findall(r"WER (\d+\.\d+)", best_wer)[0])
-            ins_err = int(re.findall(r"(\d+) ins", best_wer)[0])
-            del_err = int(re.findall(r"(\d+) del", best_wer)[0])
-            sub_err = int(re.findall(r"(\d+) sub", best_wer)[0])
-            with open(scoring_path / "wer_details" / "wer_bootci", "r") as bootci:
-                bootci = bootci.read()
-            lower_wer, upper_wer = [
-                round(float(c), 2)
-                for c in re.findall(
-                    r"Conf Interval \[ (\d+\.\d+), (\d+\.\d+) \]", bootci
-                )[0]
-            ]
-            ci = round((upper_wer - lower_wer) / 2, 2)
-            print(
-                {
-                    f"{tst}/wer": wer,
-                    f"{tst}/wer_lower": lower_wer,
-                    f"{tst}/wer_upper": upper_wer,
-                    f"{tst}/ci_width": ci,
-                    f"{tst}/ins": ins_err,
-                    f"{tst}/del": del_err,
-                    f"{tst}/sub": sub_err,
-                }
-            )
+        tst = test_set
+        graph_test_path = str(graph_path) + f"_{tst}"
+        tst_path = args.local_data_path / tst
+        # tst_path = args.local_data_path / (tst + "_med")
+        if fmllr:
+            p_decode = "_fmllr"
+        else:
+            p_decode = ""
+        task.run(
+            f"steps/decode{p_decode}.sh --lattice-beam 2.0 --nj {cpus} --cmd {args.train_cmd} {graph_path} {tst_path} {graph_test_path}",
+            graph_test_path,
+        )
+        scoring_path = Path(graph_test_path) / "scoring_kaldi"
+        task.run(
+            f"steps/scoring/score_kaldi_wer.sh {tst_path} {graph_path} {graph_test_path}",
+            scoring_path,
+        )
+        with open(scoring_path / "best_wer", "r") as best_wer:
+            best_wer = best_wer.read()
+        wer = float(re.findall(r"WER (\d+\.\d+)", best_wer)[0])
+        ins_err = int(re.findall(r"(\d+) ins", best_wer)[0])
+        del_err = int(re.findall(r"(\d+) del", best_wer)[0])
+        sub_err = int(re.findall(r"(\d+) sub", best_wer)[0])
+        with open(scoring_path / "wer_details" / "wer_bootci", "r") as bootci:
+            bootci = bootci.read()
+        lower_wer, upper_wer = [
+            round(float(c), 2)
+            for c in re.findall(
+                r"Conf Interval \[ (\d+\.\d+), (\d+\.\d+) \]", bootci
+            )[0]
+        ]
+        ci = round((upper_wer - lower_wer) / 2, 2)
+        print(
+            {
+                f"{tst}/wer": wer,
+                f"{tst}/wer_lower": lower_wer,
+                f"{tst}/wer_upper": upper_wer,
+                f"{tst}/ci_width": ci,
+                f"{tst}/ins": ins_err,
+                f"{tst}/del": del_err,
+                f"{tst}/sub": sub_err,
+            }
+        )
+        per_utt_info = (Path(scoring_path) / "wer_details" / "per_utt").read_text().split("\n")
+        per_utt_counts = [p.split(" ref")[-1] for p in per_utt_info if " ref" in p]
+        per_utt_counts = [float(len([x for x in p.strip().split() if "***" not in x])) for p in per_utt_counts]
+        per_utt_sid = [p.split("#csid")[-1].strip().split() for p in per_utt_info if "#csid" in p]
+        per_utt_sid = [float(p[1]) + float(p[2]) + float(p[3]) for p in per_utt_sid]
+        per_utt_wer = [x / y for x, y in zip(per_utt_sid, per_utt_counts)]
+        return per_utt_wer
 
-
-
-def run(args, train_ds, test_ds):
+def get_kaldi_wer(args, train_ds, test_ds):
+    if train_ds == "reference.test":
+        train_ds = "ref_test"
+    if test_ds == "reference.test":
+        test_ds = "ref_test"
+    if train_ds == "reference.dev":
+        train_ds = "ref_dev"
+    if test_ds == "reference.dev":
+        test_ds = "ref_dev"
+    if Path(f"cache/{train_ds}_{test_ds}.npy").exists():
+        return np.load(f"cache/{train_ds}_{test_ds}.npy")
     task = Tasks(args.log_file, args.kaldi_path)
-    args.test_sets = args.test_sets.split(",")
     args.lm_names = args.lm_names.split(",")
     if "," in args.clean_stages:
         args.clean_stages = args.clean_stages.split(",")
@@ -250,24 +297,7 @@ def run(args, train_ds, test_ds):
     task.run(f"local/download_lm.sh {args.lm_url} {args.lm_path}", args.lm_path)
 
     # prep train data
-    train_path = Path(args.data_path) / args.train_name
-    dest_path = Path(args.local_data_path) / args.train_set
-    if not dest_path.exists():
-        dest_path.mkdir(parents=True)
-        load_synth(train_path, dest_path)
-        print(f"loading synthetic train data")
-    else:
-        print(f"{dest_path} already exists")
-
-    args.train_set = args.train_set.replace("/", "_")
-
-    # prep test data
-    for tst in args.test_sets:
-        tst_path = Path(args.data_path) / args.data_name / tst.replace("_", "-")
-        dest_path = Path(args.local_data_path) / tst
-        task.run(f"local/data_prep.sh {tst_path} {dest_path}", dest_path)
-        if (Path(dest_path) / "spk2gender").exists():
-            task.run(f"rm {str(Path(dest_path) / 'spk2gender')}", run_in_kaldi=False)
+    prepare_data()
 
     # create lms
     task.run(
@@ -307,7 +337,7 @@ def run(args, train_ds, test_ds):
         )
 
     # mfccs
-    for tst in args.test_sets + [args.train_set]:
+    for tst in (train_ds, test_ds):
         tst_path = args.local_data_path / tst
         exp_path = args.mfcc_path / tst
         task.run(
@@ -319,37 +349,21 @@ def run(args, train_ds, test_ds):
             exp_path / f"cmvn_{tst}.log",
         )
 
-    # generate subsets
-    for tst in args.test_sets:
-        dest_path = Path(args.local_data_path) / tst
-        task.run(
-            f'utils/subset_data_dir.sh {dest_path} 100 {str(dest_path) + "_small"}',
-            str(dest_path) + "_small",
-        )
-
-    train_path = args.local_data_path / args.train_set
+    train_path = args.local_data_path / train_ds
 
     # mono
-    mono_data_path = str(train_path) + "_mono"
+    mono_data_path = str(train_path)
     clean_mono = "mono" in args.clean_stages or "all" in args.clean_stages
-    task.run(
-        f"utils/subset_data_dir.sh --shortest {train_path} {args.mono_subset} {mono_data_path}",
-        mono_data_path,
-    )
     task.run(
         f"steps/train_mono.sh --boost-silence 1.25 --nj {cpus} --cmd {args.train_cmd} {mono_data_path} {args.lang_nosp_path} {args.mono_path}",
         args.mono_path,
         clean=clean_mono,
     )
-    score_model(task, args, args.mono_path, "mono")
+    score_model(task, args, args.mono_path, "mono", test_ds)
 
     # tri1
-    tri1_data_path = str(train_path) + "_tri1"
+    tri1_data_path = str(train_path)
     clean_tri1 = "tri1" in args.clean_stages or "all" in args.clean_stages
-    task.run(
-        f"utils/subset_data_dir.sh {train_path} {args.tri1_subset} {tri1_data_path}",
-        tri1_data_path,
-    )
     tri1_ali_path = str(args.tri1_path) + "_ali"
     task.run(
         f"steps/align_si.sh --boost-silence 1.25 --nj {cpus} --cmd {args.train_cmd} {tri1_data_path} {args.lang_nosp_path} {args.mono_path} {tri1_ali_path}",
@@ -361,7 +375,7 @@ def run(args, train_ds, test_ds):
         args.tri1_path,
         clean=clean_tri1,
     )
-    score_model(task, args, args.tri1_path, "tri1", True)
+    score_model(task, args, args.tri1_path, "tri1", test_ds, True)
 
     # tri2b
     tri2b_ali_path = str(args.tri2b_path) + "_ali"
@@ -377,7 +391,7 @@ def run(args, train_ds, test_ds):
         args.tri2b_path,
         clean=clean_tri2b,
     )
-    score_model(task, args, args.tri2b_path, "tri2b", True)
+    score_model(task, args, args.tri2b_path, "tri2b", test_ds, True)
 
     # tri3b
     tri3b_ali_path = str(args.tri3b_path) + "_ali"
@@ -392,7 +406,7 @@ def run(args, train_ds, test_ds):
         args.tri3b_path,
         clean=clean_tri3b,
     )
-    score_model(task, args, args.tri3b_path, "tri3b", True)
+    score_model(task, args, args.tri3b_path, "tri3b", test_ds, True)
 
     # recompute lm
     task.run(
@@ -422,9 +436,33 @@ def run(args, train_ds, test_ds):
         ],
         clean=clean_tri3b,
     )
-    score_model(task, args, args.tri3b_path, "tri3b-probs", True, False)
+    wer_dist = score_model(task, args, args.tri3b_path, "tri3b-probs", test_ds, True, False)
+    np.save(f"cache/{train_ds}_{test_ds}.npy", wer_dist)
+    return wer_dist
 
+def get_kaldi_wasserstein(ds):
+    # rm "exp" folder
+    shutil.rmtree("exp", ignore_errors=True)
+    ref_wer = get_kaldi_wer(Args(), "reference.dev", "reference.test")
+    shutil.rmtree("exp", ignore_errors=True)
+    ds_wer = get_kaldi_wer(Args(), ds, "reference.test")
+    ref_wer = np.sort(ref_wer)
+    ds_wer = np.sort(ds_wer)
+    wasserstein = np.abs(ref_wer - ds_wer).mean()
 
-if __name__ == "__main__":
-    (args,) = HfArgumentParser([Args]).parse_args_into_dataclasses()
-    run(args)
+    figure_path = Path("figures")
+    figure_path.mkdir(exist_ok=True)
+    figure_path = figure_path / f"{ds}.png"
+    import matplotlib.pyplot as plt
+    # histogram
+    plt.hist(ref_wer, bins=50, alpha=0.5, label="Reference")
+    plt.hist(ds_wer, bins=50, alpha=0.5, label=ds)
+    plt.legend(loc="upper right")
+    plt.xlabel("WER")
+    plt.ylabel("Frequency")
+    plt.title(f"{ds} vs Reference")
+    plt.savefig(figure_path)
+    plt.close()
+
+    return wasserstein
+

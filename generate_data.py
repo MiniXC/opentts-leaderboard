@@ -10,7 +10,7 @@ from simple_hifigan import Synthesiser
 from TTS.api import TTS
 import numpy as np
 
-N_SAMPLES = 100
+N_SAMPLES = 1000
 
 def generate_ref_test():
     audios = []
@@ -107,6 +107,7 @@ def generate_hifigan():
     val = val.shuffle(seed=42)
     val = val.select(range(N_SAMPLES))
     for audio in tqdm(val, "generating hifigan"):
+        text = audio["text"]
         audio_path = audio["audio"]
         data_path = Path("data/hifigan") / Path(audio_path).name
         if not data_path.exists():
@@ -120,9 +121,9 @@ def generate_hifigan():
             audio = audio.float() / audio.float().abs().max()
             torchaudio.save(data_path, audio, 22050)
             with open(data_path.with_suffix(".txt"), "w") as f:
-                f.write(audio["text"])
+                f.write(text)
         results.append(data_path)
-        text_results.append(audio["text"])
+        text_results.append(text)
     return results, text_results
 
 
