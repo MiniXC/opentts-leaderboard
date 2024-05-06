@@ -437,6 +437,7 @@ def get_kaldi_wer(args, train_ds, test_ds):
         clean=clean_tri3b,
     )
     wer_dist = score_model(task, args, args.tri3b_path, "tri3b-probs", test_ds, True, False)
+
     np.save(f"cache/{train_ds}_{test_ds}.npy", wer_dist)
     return wer_dist
 
@@ -449,6 +450,9 @@ def get_kaldi_wasserstein(ds):
     ref_wer = np.sort(ref_wer)
     ds_wer = np.sort(ds_wer)
     wasserstein = np.abs(ref_wer - ds_wer).mean()
+    wasserstein_worst = np.abs(ref_wer - np.ones_like(ds_wer)).mean()
+
+    result = (1 - wasserstein / wasserstein_worst) * 100
 
     figure_path = Path("figures")
     figure_path.mkdir(exist_ok=True)
@@ -464,5 +468,5 @@ def get_kaldi_wasserstein(ds):
     plt.savefig(figure_path)
     plt.close()
 
-    return wasserstein
+    return result
 

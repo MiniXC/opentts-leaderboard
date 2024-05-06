@@ -12,6 +12,21 @@ import numpy as np
 
 N_SAMPLES = 1000
 
+def generate_data(train_ds, device="cuda"):
+    if not Path("data").exists():
+        Path("data").mkdir()
+    if train_ds in ["ref_test", "reference.test"]:
+        return generate_ref_test()
+    if train_ds in ["ref_dev", "reference.dev"]:
+        return generate_ref_dev()
+    if train_ds == "parler":
+        return generate_parler_tts(device)
+    if train_ds == "hifigan":
+        return generate_hifigan()
+    if train_ds == "xtts":
+        return generate_xtts(device)
+    raise ValueError(f"Unknown dataset {train_ds}")
+
 def generate_ref_test():
     audios = []
     texts = []

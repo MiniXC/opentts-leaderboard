@@ -102,29 +102,17 @@ class EmbeddingModel(ABC):
             return generate_xtts(self.device)
 
     def get_frechet(self, ds_name):
-        val = np.array(
-            [
-                frechet_distance(
-                    *self.get_mu_sigma(ds_name),
-                    *self.get_mu_sigma(f"reference.test")
-                ),
-                frechet_distance(
-                    *self.get_mu_sigma(ds_name),
-                    *self.get_mu_sigma(f"reference.dev")
-                ),
-            ]
-        )
+        val = frechet_distance(
+            *self.get_mu_sigma(ds_name),
+            *self.get_mu_sigma(f"reference.test")
+        ),
         worst_value = frechet_distance(
             *self.get_mu_sigma("reference.test"),
             *self.get_noise_mu_sigma()
         )
-        best_value = frechet_distance(
-            *self.get_mu_sigma("reference.test"),
-            *self.get_mu_sigma("reference.dev"),
-        )
         # convert to score from 0 to 1
-        result = 1 - ((val - best_value) / (worst_value - best_value))
-        return np.round(np.min(result * 100), 2), np.round(np.max(val), 3)
+        result = 1 - (val / worst_value)
+        return np.round(result * 100, 2), np.round(np.max(val), 3)
     
 
     @abstractmethod
