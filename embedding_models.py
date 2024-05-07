@@ -22,7 +22,16 @@ import whisper
 from jiwer import wer
 import hydra
 
-from generate_data import generate_parler_tts, generate_hifigan, generate_xtts, generate_ref_test, generate_ref_dev, N_SAMPLES
+from generate_data import (
+    generate_parler_tts,
+    generate_hifigan,
+    generate_xtts,
+    generate_ref_test,
+    generate_ref_dev,
+    generate_ljspeech_ref,
+    generate_tacotron,
+    N_SAMPLES
+)
 from frechet_distance import frechet_distance
 from dvector.wav2mel import Wav2Mel
 
@@ -100,16 +109,21 @@ class EmbeddingModel(ABC):
             return generate_hifigan()
         elif ds_name == "xtts":
             return generate_xtts(self.device)
+        elif ds_name == "ljspeech":
+            return generate_ljspeech_ref()
+        elif ds_name == "tacotron":
+            return generate_tacotron()
 
     def get_frechet(self, ds_name):
         val = frechet_distance(
             *self.get_mu_sigma(ds_name),
             *self.get_mu_sigma(f"reference.test")
-        ),
+        )
         worst_value = frechet_distance(
             *self.get_mu_sigma("reference.test"),
             *self.get_noise_mu_sigma()
         )
+        print(val, worst_value)
         # convert to score from 0 to 1
         result = 1 - (val / worst_value)
         return np.round(result * 100, 2), np.round(np.max(val), 3)
@@ -337,25 +351,19 @@ class WERModel(ABC):
 
     def get_audios(self, ds_name):
         if ds_name == "reference.test":
-            ds = load_dataset(
-                "cdminix/libritts-aligned", split="test.clean", trust_remote_code=True
-            )
-            ds = ds.shuffle(seed=42)
-            ds = ds.select(range(N_SAMPLES))
-            return [item["audio"] for item in ds], [item["text"] for item in ds]
+            return generate_ref_test()
         elif ds_name == "reference.dev":
-            ds = load_dataset(
-                "cdminix/libritts-aligned", split="dev.clean", trust_remote_code=True
-            )
-            ds = ds.shuffle(seed=42)
-            ds = ds.select(range(N_SAMPLES))
-            return [item["audio"] for item in ds], [item["text"] for item in ds]
+            return generate_ref_dev()
         elif ds_name == "parler":
             return generate_parler_tts(self.device)
         elif ds_name == "hifigan":
             return generate_hifigan()
         elif ds_name == "xtts":
             return generate_xtts(self.device)
+        elif ds_name == "ljspeech":
+            return generate_ljspeech_ref()
+        elif ds_name == "tacotron":
+            return generate_tacotron()
 
     def get_wasserstein(self, ds_name):
         result = np.array(

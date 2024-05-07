@@ -25,6 +25,10 @@ def generate_data(train_ds, device="cuda"):
         return generate_hifigan()
     if train_ds == "xtts":
         return generate_xtts(device)
+    if train_ds == "ljspeech":
+        return generate_ljspeech_ref()
+    if train_ds == "tacotron":
+        return generate_tacotron(device)
     raise ValueError(f"Unknown dataset {train_ds}")
 
 def generate_ref_test():
@@ -176,6 +180,49 @@ def generate_xtts(device):
             xtts.tts_to_file(
                 text=item["text"],
                 speaker_wav=str(speaker_dict[item["speaker"]]),
+                language="en",
+                file_path=str(data_path),
+            )
+            with open(data_path.with_suffix(".txt"), "w") as f:
+                f.write(item["text"])
+        results.append(data_path)
+        text_results.append(item["text"])
+    return results, text_results
+
+def generate_ljspeech_ref():
+    ljspeech = load_dataset("lj_speech", split="train")
+    ljspeech = ljspeech.shuffle(seed=42)
+    ljspeech = ljspeech.select(range(N_SAMPLES))
+    Path("data/ljspeech").mkdir(exist_ok=True, parents=True)
+    results = []
+    text_results = []
+    for item in tqdm(ljspeech, "generating ljspeech"):
+        data_path = Path("data/ljspeech") / Path(item["path"]).name
+        if not data_path.exists():
+            audio = torch.tensor(item["speech"]).to(device)
+            torchaudio.save(data_path, audio, 22050)
+            with open(data_path.with_suffix(".txt"), "w") as f:
+                f.write(item["text"])
+        results.append(data_path)
+        text_results.append(item["text"])
+    return results, text_results
+
+
+def generate_tacotron(device):
+    Path("data/ljspeech_tacotron").mkdir(exist_ok=True, parents=True)
+    results = []
+    text_results = []
+    ds = load_dataset(
+        "cdminix/libritts-aligned", split="dev.clean", trust_remote_code=True
+    )
+    ds = ds.shuffle(seed=42)
+    ds = ds.select(range(N_SAMPLES))
+    tts = TTS("tts_models/en/ljspeech/tacotron2-DD").to(device)
+    for item in tqdm(ds, "generating ljspeech tacotron"):
+        data_path = Path("data/ljspeech_tacotron") / Path(item["path"]).name
+        if not data_path.exists():
+            tts.tts_to_file(
+                text=item["text"],
                 language="en",
                 file_path=str(data_path),
             )

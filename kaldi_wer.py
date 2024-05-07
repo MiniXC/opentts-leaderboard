@@ -266,6 +266,7 @@ def score_model(task, args, path, name, test_set, fmllr=False, lang_nosp=True):
         return per_utt_wer
 
 def get_kaldi_wer(args, train_ds, test_ds):
+    prepare_data()
     if train_ds == "reference.test":
         train_ds = "ref_test"
     if test_ds == "reference.test":
