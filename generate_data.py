@@ -197,9 +197,9 @@ def generate_ljspeech_ref():
     results = []
     text_results = []
     for item in tqdm(ljspeech, "generating ljspeech"):
-        data_path = Path("data/ljspeech") / Path(item["path"]).name
+        data_path = Path("data/ljspeech") / Path(item["file"]).name.replace("-", "_")
         if not data_path.exists():
-            audio = torch.tensor(item["speech"]).to(device)
+            audio = torch.tensor(item["audio"]["array"]).float().unsqueeze(0)
             torchaudio.save(data_path, audio, 22050)
             with open(data_path.with_suffix(".txt"), "w") as f:
                 f.write(item["text"])
@@ -217,13 +217,12 @@ def generate_tacotron(device):
     )
     ds = ds.shuffle(seed=42)
     ds = ds.select(range(N_SAMPLES))
-    tts = TTS("tts_models/en/ljspeech/tacotron2-DD").to(device)
+    tts = TTS("tts_models/en/ljspeech/tacotron2-DDC")
     for item in tqdm(ds, "generating ljspeech tacotron"):
-        data_path = Path("data/ljspeech_tacotron") / Path(item["path"]).name
+        data_path = Path("data/ljspeech_tacotron") / Path(item["audio"]).name
         if not data_path.exists():
             tts.tts_to_file(
                 text=item["text"],
-                language="en",
                 file_path=str(data_path),
             )
             with open(data_path.with_suffix(".txt"), "w") as f:

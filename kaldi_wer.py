@@ -275,6 +275,10 @@ def get_kaldi_wer(args, train_ds, test_ds):
         train_ds = "ref_dev"
     if test_ds == "reference.dev":
         test_ds = "ref_dev"
+    if train_ds == "tacotron":
+        train_ds = "ljspeech_tacotron"
+    if test_ds == "tacotron":
+        test_ds = "ljspeech_tacotron"
     if Path(f"cache/{train_ds}_{test_ds}.npy").exists():
         return np.load(f"cache/{train_ds}_{test_ds}.npy")
     task = Tasks(args.log_file, args.kaldi_path)

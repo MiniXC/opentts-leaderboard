@@ -43,8 +43,12 @@ class HubertUnitCounter:
         return km
 
     def count_units(self, ds):
-        if Path(f"data/{ds}_units.pt").exists():
-            return torch.load(f"data/{ds}_unit_counts.pt"), torch.load(f"data/{ds}_unit_lengths.pt")
+        if Path(f"data/{ds}_unit_counts.pt").exists():
+            unit_counts, unit_lengths = torch.load(f"data/{ds}_unit_counts.pt"), torch.load(f"data/{ds}_unit_lengths.pt")
+            unit_counts = {
+                k: v / sum(unit_counts.values()) * 100 for k, v in unit_counts.items()
+            }
+            return unit_counts, unit_lengths
         audios, _ = generate_data(ds)
         unit_counts = {}
         unit_lengths = {}
@@ -76,32 +80,66 @@ class HubertUnitCounter:
             if current_unit not in unit_lengths:
                 unit_lengths[current_unit] = []
             unit_lengths[current_unit].append(current_length)
-        torch.save(unit_counts, f"data/{ds}_units.pt")
+        torch.save(unit_counts, f"data/{ds}_unit_counts.pt")
         torch.save(unit_lengths, f"data/{ds}_unit_lengths.pt")
+        unit_counts = {
+            k: v / sum(unit_counts.values()) * 100 for k, v in unit_counts.items()
+        }
         return unit_counts, unit_lengths
 
-
-import matplotlib.pyplot as plt
+    def get_wasserstein_distances(self, ds):
+        test_c, test_l = hubert.count_units("reference.test")
+        dev_c, dev_l = hubert.count_units("reference.dev")
+        ds_c, ds_l = hubert.count_units(ds)
+        all_test_lengths = [
+            item for sublist in test_l.values() for item in sublist
+        ]
+        all_dev_lengths = [
+            item for sublist in dev_l.values() for item in sublist
+        ]
+        all_ds_lengths = [
+            item for sublist in ds_l.values() for item in sublist
+        ]
+        all_test_lengths = np.array(all_test_lengths)
+        all_dev_lengths = np.array(all_dev_lengths)
+        all_ds_lengths = np.array(all_ds_lengths)
+        # take a random sample of whichever is the smallest
+        min_length = min(len(all_test_lengths), len(all_dev_lengths), len(all_ds_lengths))
+        np.random.seed(42)
+        all_test_lengths = np.random.choice(all_test_lengths, min_length)
+        np.random.seed(42)
+        all_dev_lengths = np.random.choice(all_dev_lengths, min_length)
+        np.random.seed(42)
+        all_ds_lengths = np.random.choice(all_ds_lengths, min_length)
+        all_test_lengths = np.sort(all_test_lengths)
+        all_dev_lengths = np.sort(all_dev_lengths)
+        all_ds_lengths = np.sort(all_ds_lengths)
+        mean_length_repeated = np.ones_like(all_test_lengths) * np.mean(all_test_lengths)
+        best_wasserstein = np.abs(all_test_lengths - all_dev_lengths).mean()
+        worst_wassterstein = np.abs(all_test_lengths - mean_length_repeated).mean()
+        length_wasserstein = np.abs(all_ds_lengths - all_test_lengths).mean()
+        # scale so that 100 is best_wasserstein and 0 is worst_wasserstein
+        length_wasserstein = (1 - (length_wasserstein - best_wasserstein) / (worst_wassterstein - best_wasserstein)) * 100
+        all_test_counts = np.array([
+            test_c[i] for i in range(100)
+        ])
+        all_dev_counts = np.array([
+            dev_c[i] for i in range(100)
+        ])
+        all_ds_counts = np.array([
+            ds_c[i] for i in range(100)
+        ])
+        all_test_counts = np.sort(all_test_counts)
+        all_dev_counts = np.sort(all_dev_counts)
+        all_ds_counts = np.sort(all_ds_counts)
+        mean_unit_values = np.ones_like(all_test_counts) * np.mean(all_test_counts)
+        best_wasserstein = np.abs(all_test_counts - all_dev_counts).mean()
+        worst_wassterstein = np.abs(all_test_counts - mean_unit_values).mean()
+        unit_wasserstein = np.abs(all_ds_counts - all_test_counts).mean()
+        # scale so that 100 is best_wasserstein and 0 is worst_wasserstein
+        unit_wasserstein = (1 - (unit_wasserstein - best_wasserstein) / (worst_wassterstein - best_wasserstein)) * 100
+        return length_wasserstein, unit_wasserstein
 
 hubert = HubertUnitCounter()
-reference_units, reference_l = hubert.count_units("reference.test")
-parler_units, parler_l = hubert.count_units("parler")
-
-plt.bar(range(100), [reference_units[i] for i in range(100)], color="blue", alpha=0.5, label="Reference")
-plt.bar(range(100), [parler_units[i] for i in range(100)], color="red", alpha=0.5, label="Parler")
-plt.legend()
-plt.savefig("units.png")
-plt.close()
-
-all_reference_lengths = [
-    item for sublist in reference_l.values() for item in sublist
-]
-all_parler_lengths = [
-    item for sublist in parler_l.values() for item in sublist
-]
-# histogram of unit lengths
-plt.hist(all_reference_lengths, bins=100, color="blue", alpha=0.5, label="Reference")
-plt.hist(all_parler_lengths, bins=100, color="red", alpha=0.5, label="Parler")
-plt.legend()
-plt.savefig("unit_lengths.png")
-plt.close()
+print(hubert.get_wasserstein_distances("reference.dev"))
+print(hubert.get_wasserstein_distances("parler"))

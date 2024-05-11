@@ -23,13 +23,7 @@ from jiwer import wer
 import hydra
 
 from generate_data import (
-    generate_parler_tts,
-    generate_hifigan,
-    generate_xtts,
-    generate_ref_test,
-    generate_ref_dev,
-    generate_ljspeech_ref,
-    generate_tacotron,
+    generate_data,
     N_SAMPLES
 )
 from frechet_distance import frechet_distance
@@ -99,20 +93,7 @@ class EmbeddingModel(ABC):
         return mu, sigma
 
     def get_audios(self, ds_name):
-        if ds_name == "reference.test":
-            return generate_ref_test()
-        elif ds_name == "reference.dev":
-            return generate_ref_dev()
-        elif ds_name == "parler":
-            return generate_parler_tts(self.device)
-        elif ds_name == "hifigan":
-            return generate_hifigan()
-        elif ds_name == "xtts":
-            return generate_xtts(self.device)
-        elif ds_name == "ljspeech":
-            return generate_ljspeech_ref()
-        elif ds_name == "tacotron":
-            return generate_tacotron()
+        return generate_data(ds_name, self.device)
 
     def get_frechet(self, ds_name):
         val = frechet_distance(
@@ -123,10 +104,13 @@ class EmbeddingModel(ABC):
             *self.get_mu_sigma("reference.test"),
             *self.get_noise_mu_sigma()
         )
-        print(val, worst_value)
+        best_value = frechet_distance(
+            *self.get_mu_sigma("reference.test"),
+            *self.get_mu_sigma("reference.dev"),
+        )
         # convert to score from 0 to 1
-        result = 1 - (val / worst_value)
-        return np.round(result * 100, 2), np.round(np.max(val), 3)
+        result = 1 - ((val - best_value) / (worst_value - best_value))
+        return np.round(result * 100, 2)
     
 
     @abstractmethod
@@ -254,12 +238,12 @@ class Miipher(EmbeddingModel):
         degraded_ssl_feature = degraded_ssl_feature.to(self.device)
         with torch.no_grad():
             cleaned_ssl_feature, _ = self.miipher(phone_feature, speaker_feature, degraded_ssl_feature)
-        degraded_wav_16k = batch['degraded_wav_16k'].view(1,-1)
-        vocoder_xvector = self.xvector_model.encode_batch(degraded_wav_16k.cpu()).squeeze(1).to(self.device)
-        cleaned_wav = self.vocoder.generator_forward({"input_feature": cleaned_ssl_feature, "xvector": vocoder_xvector})[0].T.view(1,-1)
-        cleaned_wav = cleaned_wav / cleaned_wav.abs().max()
-        original_wav = self.vocoder.generator_forward({"input_feature": degraded_ssl_feature, "xvector": vocoder_xvector})[0].T.view(1,-1)
-        original_wav = original_wav / original_wav.abs().max()
+            degraded_wav_16k = batch['degraded_wav_16k'].view(1,-1)
+            vocoder_xvector = self.xvector_model.encode_batch(degraded_wav_16k.cpu()).squeeze(1).to(self.device)
+            cleaned_wav = self.vocoder.generator_forward({"input_feature": cleaned_ssl_feature, "xvector": vocoder_xvector})[0].T.view(1,-1)
+            cleaned_wav = cleaned_wav / cleaned_wav.abs().max()
+            original_wav = self.vocoder.generator_forward({"input_feature": degraded_ssl_feature, "xvector": vocoder_xvector})[0].T.view(1,-1)
+            original_wav = original_wav / original_wav.abs().max()
         # get difference between original and cleaned
         if hasattr(self, "audio_features"):
             cleaned_mfcc = self.audio_features(cleaned_wav.cpu())
@@ -350,20 +334,7 @@ class WERModel(ABC):
         return wer
 
     def get_audios(self, ds_name):
-        if ds_name == "reference.test":
-            return generate_ref_test()
-        elif ds_name == "reference.dev":
-            return generate_ref_dev()
-        elif ds_name == "parler":
-            return generate_parler_tts(self.device)
-        elif ds_name == "hifigan":
-            return generate_hifigan()
-        elif ds_name == "xtts":
-            return generate_xtts(self.device)
-        elif ds_name == "ljspeech":
-            return generate_ljspeech_ref()
-        elif ds_name == "tacotron":
-            return generate_tacotron()
+        return generate_data(ds_name, self.device)
 
     def get_wasserstein(self, ds_name):
         result = np.array(
