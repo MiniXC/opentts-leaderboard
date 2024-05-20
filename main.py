@@ -1,7 +1,26 @@
-from embedding_models import MFCC, Hubert, Wav2Vec2, DVector, XVector, Miipher, Voicefixer, Whisper, Wav2Vec2WER
+from embedding_models import MFCC, Hubert, Wav2Vec2, DVector, XVector, Miipher, Voicefixer, Whisper, Wav2Vec2WER, ProsodyMPM
 from kaldi_wer import get_kaldi_wasserstein
+from hubert_units import HubertUnitCounter
 
 if __name__ == "__main__":
+    hubert_units = HubertUnitCounter()
+    print("Hubert Units")
+    print("Reference dev:", hubert_units.get_wasserstein_distances("reference.dev"))
+    print("Parler:", hubert_units.get_wasserstein_distances("parler"))
+    print("Hifigan:", hubert_units.get_wasserstein_distances("hifigan"))
+    print("Xtts:", hubert_units.get_wasserstein_distances("xtts"))
+    print("LJSpeech:", hubert_units.get_wasserstein_distances("ljspeech"))
+    print("Tacotron2:", hubert_units.get_wasserstein_distances("tacotron"))
+
+    prosody = ProsodyMPM()
+    print("Prosody")
+    print("Reference dev:", prosody.get_frechet("reference.dev"))
+    print("Parler:", prosody.get_frechet("parler"))
+    print("Hifigan:", prosody.get_frechet("hifigan"))
+    print("Xtts:", prosody.get_frechet("xtts"))
+    print("LJSpeech:", prosody.get_frechet("ljspeech"))
+    print("Tacotron2:", prosody.get_frechet("tacotron"))
+
     print("Kaldi WER")
     print("Reference dev:", get_kaldi_wasserstein("reference.dev"))
     print("Parler:", get_kaldi_wasserstein("parler"))

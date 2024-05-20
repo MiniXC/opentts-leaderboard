@@ -21,6 +21,12 @@ from voicefixer import VoiceFixer
 import whisper
 from jiwer import wer
 import hydra
+from masked_prosody_model import MaskedProsodyModel
+from speech_collator.measures import (
+    PitchMeasure,
+    EnergyMeasure,
+    VoiceActivityMeasure,
+)
 
 from generate_data import (
     generate_data,
@@ -35,7 +41,7 @@ load_dotenv()
 class EmbeddingModel(ABC):
     model_layer = 6
 
-    def get_embedding(self, audio, text, noise=False):
+    def get_embedding(self, audio, text, speaker, noise=False):
         if isinstance(audio, str) or isinstance(audio, Path):
             audio, sr = torchaudio.load(audio)
             audio = audio / audio.abs().max()
@@ -51,7 +57,7 @@ class EmbeddingModel(ABC):
         if noise:
             audio = torch.randn_like(audio)
             audio = audio / audio.abs().max()
-        return self._get_embedding(audio, sr, text)
+        return self._get_embedding(audio, sr, text, speaker)
 
     def get_mu_sigma(self, ds_name):
         noise = False
@@ -62,9 +68,9 @@ class EmbeddingModel(ABC):
             sigma = np.load(Path("cache") / f"{prefix}_{ds_name}_sigma.npy")
             return mu, sigma
         features = []
-        audios, texts = self.get_audios(ds_name)
-        for audio, text in tqdm(zip(audios, texts), f"generating {ds_name}"):
-            features.append(self.get_embedding(audio, text, noise=noise))
+        audios, texts, speakers = self.get_audios(ds_name)
+        for audio, text, speaker in tqdm(zip(audios, texts, speakers), f"generating {ds_name}"):
+            features.append(self.get_embedding(audio, text, speaker, noise=noise))
         features = np.array(features)
         mu = np.mean(features, axis=0)
         sigma = np.cov(features, rowvar=False)
@@ -125,7 +131,7 @@ class MFCC(EmbeddingModel):
             sample_rate=16000, n_mfcc=40, melkwargs={"n_fft": 1024, "hop_length": 256, "n_mels": 80}
         )
 
-    def _get_embedding(self, audio, sr, text):
+    def _get_embedding(self, audio, sr, text, speaker=None):
         mfcc = self.mfcc(audio)
         mfcc = mfcc.mean(2).detach().cpu().numpy()[0]
         return mfcc
@@ -139,7 +145,7 @@ class Hubert(EmbeddingModel):
         self.hubert_model.eval()
         self.device = device
 
-    def _get_embedding(self, audio, sr, text):
+    def _get_embedding(self, audio, sr, text, speaker=None):
         input_values = self.hubert_processor(
             audio, return_tensors="pt", sampling_rate=16000
         ).input_values
@@ -157,7 +163,7 @@ class Wav2Vec2(EmbeddingModel):
         self.wav2vec2_model.eval()
         self.device = device
 
-    def _get_embedding(self, audio, sr, text):
+    def _get_embedding(self, audio, sr, text, speaker=None):
         input_values = self.wav2vec2_processor(
             audio, return_tensors="pt", sampling_rate=16000
         ).input_values
@@ -173,11 +179,40 @@ class DVector(EmbeddingModel):
         self.dvector = self.dvector.to(device)
         self.device = device
 
-    def _get_embedding(self, audio, sr, text):
+    def _get_embedding(self, audio, sr, text, speaker=None):
         mel_tensor = self.wav2mel(audio, sr)  # shape: (frames, mel_dim)
         mel_tensor = mel_tensor.to(self.device)
         emb_tensor = self.dvector.embed_utterance(mel_tensor)
         return emb_tensor.detach().cpu().numpy()[0]
+
+class DVectorIntra(EmbeddingModel):
+    def __init__(self, dataset, device="cuda"):
+        self.dvector = torch.jit.load("dvector/dvector.pt").eval()
+        self.dvector = self.dvector.to(device)
+        self.device = device
+        self.speaker_centroids = calculate_speaker_centroids(dataset)
+        
+    def calculate_speaker_centroids(self, dataset):
+        speaker_centroids = {}
+        audios, texts, speakers = load_dataset(dataset)
+        for audio, text, speaker in zip(audios, texts, speakers):
+            if speaker not in speaker_centroids:
+                speaker_centroids[speaker] = []
+            mel_tensor = self.wav2mel(audio, sr)
+            mel_tensor = mel_tensor.to(self.device)
+            emb_tensor = self.dvector.embed_utterance(mel_tensor)
+            speaker_centroids[speaker].append(emb_tensor.detach().cpu().numpy()[0])
+        for speaker in speaker_centroids:
+            speaker_centroids[speaker] = np.mean(speaker_centroids[speaker], axis=0)
+        return speaker_centroids
+
+    def _get_embedding(self, audio, sr, text, speaker):
+        mel_tensor = self.wav2mel(audio, sr)  # shape: (frames, mel_dim)
+        mel_tensor = mel_tensor.to(self.device)
+        emb_tensor = self.dvector.embed_utterance(mel_tensor)
+        emb_tensor = emb_tensor.detach().cpu().numpy()[0]
+        return emb_tensor - self.speaker_centroids[speaker]
+        
 
 class XVector(EmbeddingModel):
     def __init__(self, device="cuda"):
@@ -186,7 +221,7 @@ class XVector(EmbeddingModel):
         self.xvector = Inference(xvector_model, window="whole")
         self.device = device
 
-    def _get_embedding(self, audio, sr, text):
+    def _get_embedding(self, audio, sr, text, speaker=None):
         # save to temp file
         with tempfile.NamedTemporaryFile(suffix=".wav") as f:
             torchaudio.save(f.name, audio, sr)
@@ -196,6 +231,44 @@ class XVector(EmbeddingModel):
             except RuntimeError:
                 embedding = np.zeros(512)
         return embedding[0]
+
+class XVectorIntra(EmbeddingModel):
+    def __init__(self, dataset, device="cuda"):
+        xvector_model = Model.from_pretrained("pyannote/embedding", use_auth_token=os.getenv("HUGGINGFACE_TOKEN"))
+        xvector_model.to(device)
+        self.xvector = Inference(xvector_model, window="whole")
+        self.device = device
+        self.speaker_centroids = calculate_speaker_centroids(dataset)
+
+    def calculate_speaker_centroids(self, dataset):
+        speaker_centroids = {}
+        audios, texts, speakers = load_dataset(dataset)
+        for audio, text, speaker in zip(audios, texts, speakers):
+            if speaker not in speaker_centroids:
+                speaker_centroids[speaker] = []
+            # save to temp file
+            with tempfile.NamedTemporaryFile(suffix=".wav") as f:
+                torchaudio.save(f.name, audio, sr)
+                # get embedding
+                try:
+                    embedding = self.xvector(f.name)
+                except RuntimeError:
+                    embedding = np.zeros(512)
+                speaker_centroids[speaker].append(embedding[0])
+        for speaker in speaker_centroids:
+            speaker_centroids[speaker] = np.mean(speaker_centroids[speaker], axis=0)
+        return speaker_centroids
+
+    def _get_embedding(self, audio, sr, text, speaker):
+        # save to temp file
+        with tempfile.NamedTemporaryFile(suffix=".wav") as f:
+            torchaudio.save(f.name, audio, sr)
+            # get embedding
+            try:
+                embedding = self.xvector(f.name)
+            except RuntimeError:
+                embedding = np.zeros(512)
+        return embedding[0] - self.speaker_centroids[speaker]
     
 class Miipher(EmbeddingModel):
     """
@@ -213,10 +286,15 @@ class Miipher(EmbeddingModel):
         self.xvector_model = hydra.utils.instantiate(self.vocoder.cfg.data.xvector.model)
         self.xvector_model = self.xvector_model.to("cpu")
         self.device = device
+        self.audio_features_type = audio_features
         if audio_features == "mfcc":
             self.audio_features = torchaudio.transforms.MFCC(
                 sample_rate=16000, n_mfcc=40, melkwargs={"n_fft": 1024, "hop_length": 256, "n_mels": 80}
             )
+        elif audio_features == "hubert":
+            self.audio_features = Hubert(device=device)
+        elif audio_features == "wav2vec2":
+            self.audio_features = Wav2Vec2(device=device)
 
     def _get_embedding(self, audio, sr, text):
         wav = audio
@@ -246,19 +324,38 @@ class Miipher(EmbeddingModel):
             original_wav = original_wav / original_wav.abs().max()
         # get difference between original and cleaned
         if hasattr(self, "audio_features"):
-            cleaned_mfcc = self.audio_features(cleaned_wav.cpu())
-            original_mfcc = self.audio_features(original_wav.cpu())
-            mfcc_diff = (cleaned_mfcc - original_mfcc).mean(2).detach().cpu().numpy()[0]
-            return mfcc_diff
+            if self.audio_features_type == "mfcc":
+                cleaned_mfcc = self.audio_features(cleaned_wav.cpu())
+                original_mfcc = self.audio_features(original_wav.cpu())
+                mfcc_diff = (cleaned_mfcc - original_mfcc).mean(2).detach().cpu().numpy()[0]
+                if np.isnan(mfcc_diff).any():
+                    mfcc_diff = np.zeros_like(mfcc_diff)
+                return mfcc_diff
+            elif self.audio_features_type == "hubert":
+                cleaned_hubert = self.audio_features._get_embedding(cleaned_wav, 16000, text)
+                original_hubert = self.audio_features._get_embedding(original_wav, 16000, text)
+                hubert_diff = cleaned_hubert - original_hubert
+                return hubert_diff
+            elif self.audio_features_type == "wav2vec2":
+                cleaned_wav2vec2 = self.audio_features._get_embedding(cleaned_wav, 16000, text)
+                original_wav2vec2 = self.audio_features._get_embedding(original_wav, 16000, text)
+                wav2vec2_diff = cleaned_wav2vec2 - original_wav2vec2
+                return wav2vec2_diff
+
 
 class Voicefixer(EmbeddingModel):
     def __init__(self, device="cuda", audio_features="mfcc"):
         self.voicefixer = VoiceFixer()
         self.device = device
+        self.audio_features_type = audio_features
         if audio_features == "mfcc":
             self.audio_features = torchaudio.transforms.MFCC(
                 sample_rate=16000, n_mfcc=40, melkwargs={"n_fft": 1024, "hop_length": 256, "n_mels": 80}
             )
+        elif audio_features == "hubert":
+            self.audio_features = Hubert(device=device)
+        elif audio_features == "wav2vec2":
+            self.audio_features = Wav2Vec2(device=device)
 
     def _get_embedding(self, audio, sr, text):
         # input & output temp files
@@ -273,10 +370,72 @@ class Voicefixer(EmbeddingModel):
                 original_wav = audio
                 original_wav = original_wav / original_wav.abs().max()
                 if hasattr(self, "audio_features"):
-                    cleaned_mfcc = self.audio_features(cleaned_wav)
-                    original_mfcc = self.audio_features(original_wav.cpu())
-                    mfcc_diff = (cleaned_mfcc - original_mfcc).mean(2).detach().cpu().numpy()[0]
-                    return mfcc_diff
+                    if self.audio_features_type == "mfcc":
+                        cleaned_mfcc = self.audio_features(cleaned_wav)
+                        original_mfcc = self.audio_features(original_wav.cpu())
+                        if cleaned_mfcc.shape[2] != original_mfcc.shape[2]:
+                            cleaned_mfcc = cleaned_mfcc[:, :, :original_mfcc.shape[2]]
+                        mfcc_diff = (cleaned_mfcc - original_mfcc).mean(2).detach().cpu().numpy()[0]
+                        return mfcc_diff
+                    elif self.audio_features_type == "hubert":
+                        cleaned_hubert = self.audio_features._get_embedding(cleaned_wav, 16000, text)
+                        original_hubert = self.audio_features._get_embedding(original_wav, 16000, text)
+                        hubert_diff = cleaned_hubert - original_hubert
+                        return hubert_diff
+                    elif self.audio_features_type == "wav2vec2":
+                        cleaned_wav2vec2 = self.audio_features._get_embedding(cleaned_wav, 16000, text)
+                        original_wav2vec2 = self.audio_features._get_embedding(original_wav, 16000, text)
+                        wav2vec2_diff = cleaned_wav2vec2 - original_wav2vec2
+                        return wav2vec2_diff
+
+class ProsodyMPM(EmbeddingModel):
+    def __init__(self, device="cuda"):
+        self.mpm = MaskedProsodyModel.from_pretrained("cdminix/masked_prosody_model")
+        self.device = device
+        self.mpm = self.mpm.to(device)
+        self.mpm.eval()
+        self.pitch_measure = PitchMeasure()
+        self.energy_measure = EnergyMeasure()
+        self.voice_activity_measure = VoiceActivityMeasure()
+        self.pitch_min = 50
+        self.pitch_max = 300
+        self.energy_min = 0
+        self.energy_max = 0.2
+        self.vad_min = 0
+        self.vad_max = 1
+        self.bins = torch.linspace(0, 1, 128)
+
+    def _get_embedding(self, audio, sr, text, speaker=None):
+        # resample to 22050 if needed
+        if sr != 22050:
+            audio = torchaudio.transforms.Resample(sr, 22050)(audio)
+        if isinstance(audio, torch.Tensor):
+            audio = audio.numpy()
+        if len(audio.shape) == 2:
+            audio = audio[0]
+        pitch = self.pitch_measure(audio, np.array([1000]))["measure"]
+        energy = self.energy_measure(audio, np.array([1000]))["measure"]
+        vad = self.voice_activity_measure(audio, np.array([1000]))["measure"]
+        pitch = torch.tensor(pitch)
+        energy = torch.tensor(energy)
+        vad = torch.tensor(vad)
+        pitch[torch.isnan(pitch)] = -1000
+        energy[torch.isnan(energy)] = -1000
+        vad[torch.isnan(vad)] = -1000
+        pitch = torch.clip(pitch, self.pitch_min, self.pitch_max)
+        energy = torch.clip(energy, self.energy_min, self.energy_max)
+        vad = torch.clip(vad, self.vad_min, self.vad_max)
+        pitch = pitch / (self.pitch_max - self.pitch_min)
+        energy = energy / (self.energy_max - self.energy_min)
+        vad = vad / (self.vad_max - self.vad_min)
+        pitch = torch.bucketize(pitch, self.bins)
+        energy = torch.bucketize(energy, self.bins)
+        vad = torch.bucketize(vad, torch.linspace(0, 1, 2))
+        model_input = torch.stack([pitch, energy, vad]).unsqueeze(0)
+        with torch.no_grad():
+            reprs = self.mpm(model_input.to(self.device), return_layer=7)["representations"]
+        reprs = reprs.mean(1).detach().cpu().numpy()[0]
+        return reprs
 
 wasserstein = lambda x, y: np.mean(np.abs(np.sort(x) - np.sort(y)))
 
