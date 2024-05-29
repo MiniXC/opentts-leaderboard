@@ -22,7 +22,7 @@ class HubertUnitCounter:
             km.fit(clusters) # this is a hack
             km.cluster_centers_ = clusters
             return km
-        audios, texts = generate_data("reference.test")
+        audios, texts, speakers = generate_data("reference.test")
         km = KMeans(n_clusters=100)
         clusters = []
         all_features = []
@@ -43,13 +43,13 @@ class HubertUnitCounter:
         return km
 
     def count_units(self, ds):
-        if Path(f"data/{ds}_unit_counts.pt").exists():
-            unit_counts, unit_lengths = torch.load(f"data/{ds}_unit_counts.pt"), torch.load(f"data/{ds}_unit_lengths.pt")
+        if Path(f"cache/{ds}_unit_counts.pt").exists():
+            unit_counts, unit_lengths = torch.load(f"cache/{ds}_unit_counts.pt"), torch.load(f"cache/{ds}_unit_lengths.pt")
             unit_counts = {
                 k: v / sum(unit_counts.values()) * 100 for k, v in unit_counts.items()
             }
             return unit_counts, unit_lengths
-        audios, _ = generate_data(ds)
+        audios, _, _ = generate_data(ds)
         unit_counts = {}
         unit_lengths = {}
         for audio in tqdm(audios, desc=f"Counting units for {ds}"):
@@ -80,17 +80,17 @@ class HubertUnitCounter:
             if current_unit not in unit_lengths:
                 unit_lengths[current_unit] = []
             unit_lengths[current_unit].append(current_length)
-        torch.save(unit_counts, f"data/{ds}_unit_counts.pt")
-        torch.save(unit_lengths, f"data/{ds}_unit_lengths.pt")
+        torch.save(unit_counts, f"cache/{ds}_unit_counts.pt")
+        torch.save(unit_lengths, f"cache/{ds}_unit_lengths.pt")
         unit_counts = {
             k: v / sum(unit_counts.values()) * 100 for k, v in unit_counts.items()
         }
         return unit_counts, unit_lengths
 
     def get_wasserstein_distances(self, ds):
-        test_c, test_l = hubert.count_units("reference.test")
-        dev_c, dev_l = hubert.count_units("reference.dev")
-        ds_c, ds_l = hubert.count_units(ds)
+        test_c, test_l = self.count_units("reference.test")
+        dev_c, dev_l = self.count_units("reference.dev")
+        ds_c, ds_l = self.count_units(ds)
         all_test_lengths = [
             item for sublist in test_l.values() for item in sublist
         ]
@@ -139,7 +139,3 @@ class HubertUnitCounter:
         # scale so that 100 is best_wasserstein and 0 is worst_wasserstein
         unit_wasserstein = (1 - (unit_wasserstein - best_wasserstein) / (worst_wassterstein - best_wasserstein)) * 100
         return length_wasserstein, unit_wasserstein
-
-hubert = HubertUnitCounter()
-print(hubert.get_wasserstein_distances("reference.dev"))
-print(hubert.get_wasserstein_distances("parler"))

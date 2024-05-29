@@ -41,7 +41,7 @@ load_dotenv()
 class EmbeddingModel(ABC):
     model_layer = 6
 
-    def get_embedding(self, audio, text, speaker, noise=False):
+    def process_audio(self, audio, noise=False):
         if isinstance(audio, str) or isinstance(audio, Path):
             audio, sr = torchaudio.load(audio)
             audio = audio / audio.abs().max()
@@ -57,9 +57,14 @@ class EmbeddingModel(ABC):
         if noise:
             audio = torch.randn_like(audio)
             audio = audio / audio.abs().max()
+        return audio, sr
+
+    def get_embedding(self, audio, text, speaker, noise=False):
+        audio, sr = self.process_audio(audio, noise=noise)
         return self._get_embedding(audio, sr, text, speaker)
 
     def get_mu_sigma(self, ds_name):
+        self._dataset_hook(ds_name)
         noise = False
         prefix = self.__class__.__name__.lower()
         Path("cache").mkdir(exist_ok=True, parents=True)
@@ -79,6 +84,7 @@ class EmbeddingModel(ABC):
         return mu, sigma
 
     def get_noise_mu_sigma(self):
+        self._dataset_hook("reference.test")
         noise = True
         ds_name = "noise"
         prefix = self.__class__.__name__.lower()
@@ -88,9 +94,9 @@ class EmbeddingModel(ABC):
             sigma = np.load(Path("cache") / f"{prefix}_{ds_name}_sigma.npy")
             return mu, sigma
         features = []
-        audios, texts = self.get_audios("reference.test")
-        for audio, text in tqdm(zip(audios, texts), f"generating {ds_name}"):
-            features.append(self.get_embedding(audio, text, noise=noise))
+        audios, texts, speakers = self.get_audios("reference.test")
+        for audio, text, speaker in tqdm(zip(audios, texts, speakers), f"generating {ds_name}"):
+            features.append(self.get_embedding(audio, text, speaker, noise=noise))
         features = np.array(features)
         mu = np.mean(features, axis=0)
         sigma = np.cov(features, rowvar=False)
@@ -121,6 +127,9 @@ class EmbeddingModel(ABC):
 
     @abstractmethod
     def _get_embedding(self, audio, sr, text):
+        pass
+
+    def _dataset_hook(self, ds):
         pass
 
 
@@ -187,17 +196,21 @@ class DVector(EmbeddingModel):
 
 class DVectorIntra(EmbeddingModel):
     def __init__(self, dataset, device="cuda"):
+        self.wav2mel = Wav2Mel()
         self.dvector = torch.jit.load("dvector/dvector.pt").eval()
         self.dvector = self.dvector.to(device)
         self.device = device
-        self.speaker_centroids = calculate_speaker_centroids(dataset)
+    
+    def _dataset_hook(self, ds):
+        self.speaker_centroids = self.calculate_speaker_centroids(ds)
         
     def calculate_speaker_centroids(self, dataset):
         speaker_centroids = {}
-        audios, texts, speakers = load_dataset(dataset)
+        audios, texts, speakers = generate_data(dataset)
         for audio, text, speaker in zip(audios, texts, speakers):
             if speaker not in speaker_centroids:
                 speaker_centroids[speaker] = []
+            audio, sr = self.process_audio(audio)
             mel_tensor = self.wav2mel(audio, sr)
             mel_tensor = mel_tensor.to(self.device)
             emb_tensor = self.dvector.embed_utterance(mel_tensor)
@@ -238,15 +251,19 @@ class XVectorIntra(EmbeddingModel):
         xvector_model.to(device)
         self.xvector = Inference(xvector_model, window="whole")
         self.device = device
-        self.speaker_centroids = calculate_speaker_centroids(dataset)
+        self.speaker_centroids = self.calculate_speaker_centroids(dataset)
+
+    def _dataset_hook(self, ds):
+        self.speaker_centroids = self.calculate_speaker_centroids(ds)
 
     def calculate_speaker_centroids(self, dataset):
         speaker_centroids = {}
-        audios, texts, speakers = load_dataset(dataset)
+        audios, texts, speakers = generate_data(dataset)
         for audio, text, speaker in zip(audios, texts, speakers):
             if speaker not in speaker_centroids:
                 speaker_centroids[speaker] = []
             # save to temp file
+            audio, sr = self.process_audio(audio)
             with tempfile.NamedTemporaryFile(suffix=".wav") as f:
                 torchaudio.save(f.name, audio, sr)
                 # get embedding
@@ -275,7 +292,7 @@ class Miipher(EmbeddingModel):
     See: https://github.com/Wataru-Nakata/miipher/blob/main/examples/demo.py
     """
 
-    def __init__(self, device="cuda", audio_features="mfcc"):
+    def __init__(self, device="cuda", audio_features="mfcc", audio_features_device="cuda"):
         miipher_path = "https://huggingface.co/spaces/Wataru/Miipher/resolve/main/miipher.ckpt"
         self.miipher = MiipherLightningModule.load_from_checkpoint(miipher_path,map_location=device)
         self.preprocessor = PreprocessForInfer(self.miipher.cfg)
@@ -292,11 +309,11 @@ class Miipher(EmbeddingModel):
                 sample_rate=16000, n_mfcc=40, melkwargs={"n_fft": 1024, "hop_length": 256, "n_mels": 80}
             )
         elif audio_features == "hubert":
-            self.audio_features = Hubert(device=device)
+            self.audio_features = Hubert(device=audio_features_device)
         elif audio_features == "wav2vec2":
-            self.audio_features = Wav2Vec2(device=device)
+            self.audio_features = Wav2Vec2(device=audio_features_device)
 
-    def _get_embedding(self, audio, sr, text):
+    def _get_embedding(self, audio, sr, text, speaker=None):
         wav = audio
         batch = self.preprocessor.process(
             'test',
@@ -344,20 +361,21 @@ class Miipher(EmbeddingModel):
 
 
 class Voicefixer(EmbeddingModel):
-    def __init__(self, device="cuda", audio_features="mfcc"):
+    def __init__(self, device="cuda", audio_features="mfcc", audio_features_device="cuda"):
         self.voicefixer = VoiceFixer()
         self.device = device
         self.audio_features_type = audio_features
+        self.audio_features_device = audio_features_device
         if audio_features == "mfcc":
             self.audio_features = torchaudio.transforms.MFCC(
                 sample_rate=16000, n_mfcc=40, melkwargs={"n_fft": 1024, "hop_length": 256, "n_mels": 80}
             )
         elif audio_features == "hubert":
-            self.audio_features = Hubert(device=device)
+            self.audio_features = Hubert(device=audio_features_device)
         elif audio_features == "wav2vec2":
-            self.audio_features = Wav2Vec2(device=device)
+            self.audio_features = Wav2Vec2(device=audio_features_device)
 
-    def _get_embedding(self, audio, sr, text):
+    def _get_embedding(self, audio, sr, text, speaker=None):
         # input & output temp files
         with tempfile.NamedTemporaryFile(suffix=".wav") as f_in:
             torchaudio.save(f_in.name, audio, sr)

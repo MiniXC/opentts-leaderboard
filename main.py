@@ -1,8 +1,34 @@
-from embedding_models import MFCC, Hubert, Wav2Vec2, DVector, XVector, Miipher, Voicefixer, Whisper, Wav2Vec2WER, ProsodyMPM
+from embedding_models import (
+    MFCC,
+    Hubert, 
+    Wav2Vec2, 
+    DVector,
+    DVectorIntra, 
+    XVector, 
+    XVectorIntra,
+    Miipher, 
+    Voicefixer, 
+    Whisper, 
+    Wav2Vec2WER, 
+    ProsodyMPM
+)
 from kaldi_wer import get_kaldi_wasserstein
 from hubert_units import HubertUnitCounter
+from pathlib import Path
+
+Path("cache").mkdir(exist_ok=True)
+Path("results").mkdir(exist_ok=True)
 
 if __name__ == "__main__":
+    mfcc = MFCC()
+    print("MFCC")
+    print("Reference dev:", mfcc.get_frechet("reference.dev"))
+    print("Parler:", mfcc.get_frechet("parler"))
+    print("Hifigan:", mfcc.get_frechet("hifigan"))
+    print("Xtts:", mfcc.get_frechet("xtts"))
+    print("LJSpeech:", mfcc.get_frechet("ljspeech"))
+    print("Tacotron2:", mfcc.get_frechet("tacotron"))
+
     hubert_units = HubertUnitCounter()
     print("Hubert Units")
     print("Reference dev:", hubert_units.get_wasserstein_distances("reference.dev"))
@@ -10,7 +36,7 @@ if __name__ == "__main__":
     print("Hifigan:", hubert_units.get_wasserstein_distances("hifigan"))
     print("Xtts:", hubert_units.get_wasserstein_distances("xtts"))
     print("LJSpeech:", hubert_units.get_wasserstein_distances("ljspeech"))
-    print("Tacotron2:", hubert_units.get_wasserstein_distances("tacotron"))
+    print("Tacotron2:", hubert_units.get_wasserstein_distances("lj_tacotron2"))
 
     prosody = ProsodyMPM()
     print("Prosody")
@@ -65,6 +91,20 @@ if __name__ == "__main__":
     print("LJSpeech:", dvector.get_frechet("ljspeech"))
     print("Tacotron2:", dvector.get_frechet("tacotron"))
 
+    print("DVector (Intra)")
+    dvector = DVectorIntra("reference.dev")
+    print("Reference dev:", dvector.get_frechet("reference.dev"))
+    dvector = DVectorIntra("parler")
+    print("Parler:", dvector.get_frechet("parler"))
+    dvector = DVectorIntra("hifigan")
+    print("Hifigan:", dvector.get_frechet("hifigan"))
+    dvector = DVectorIntra("xtts")
+    print("Xtts:", dvector.get_frechet("xtts"))
+    dvector = DVectorIntra("ljspeech")
+    print("LJSpeech:", dvector.get_frechet("ljspeech"))
+    dvector = DVectorIntra("tacotron")
+    print("Tacotron2:", dvector.get_frechet("tacotron"))
+
     xvector = XVector()
     print("XVector")
     print("Reference dev:", xvector.get_frechet("reference.dev"))
@@ -74,8 +114,22 @@ if __name__ == "__main__":
     print("LJSpeech:", xvector.get_frechet("ljspeech"))
     print("Tacotron2:", xvector.get_frechet("tacotron"))
 
-    miipher = Miipher(device="cpu") # "cuda" or "cpu"
-    print("Miipher")
+    print("XVector (Intra)")
+    xvector = XVectorIntra("reference.dev")
+    print("Reference dev:", xvector.get_frechet("reference.dev"))
+    xvector = XVectorIntra("parler")
+    print("Parler:", xvector.get_frechet("parler"))
+    xvector = XVectorIntra("hifigan")
+    print("Hifigan:", xvector.get_frechet("hifigan"))
+    xvector = XVectorIntra("xtts")
+    print("Xtts:", xvector.get_frechet("xtts"))
+    xvector = XVectorIntra("ljspeech")
+    print("LJSpeech:", xvector.get_frechet("ljspeech"))
+    xvector = XVectorIntra("tacotron")
+    print("Tacotron2:", xvector.get_frechet("tacotron"))
+
+    miipher = Miipher(device="cpu", audio_features="hubert", audio_features_device="cuda")
+    print("Miipher (hubert)")
     print("Reference dev:", miipher.get_frechet("reference.dev"))
     print("Parler:", miipher.get_frechet("parler"))
     print("Hifigan:", miipher.get_frechet("hifigan"))
@@ -83,8 +137,26 @@ if __name__ == "__main__":
     print("LJSpeech:", miipher.get_frechet("ljspeech"))
     print("Tacotron2:", miipher.get_frechet("tacotron"))
 
-    voicefixer = Voicefixer("cpu")
-    print("Voicefixer")
+    miipher = Miipher(device="cpu", audio_features="mfcc")
+    print("Miipher (mfcc)")
+    print("Reference dev:", miipher.get_frechet("reference.dev"))
+    print("Parler:", miipher.get_frechet("parler"))
+    print("Hifigan:", miipher.get_frechet("hifigan"))
+    print("Xtts:", miipher.get_frechet("xtts"))
+    print("LJSpeech:", miipher.get_frechet("ljspeech"))
+    print("Tacotron2:", miipher.get_frechet("tacotron"))
+
+    voicefixer = Voicefixer("cpu", audio_features="hubert", audio_features_device="cuda")
+    print("Voicefixer (hubert)")
+    print("Reference dev:", voicefixer.get_frechet("reference.dev"))
+    print("Parler:", voicefixer.get_frechet("parler"))
+    print("Hifigan:", voicefixer.get_frechet("hifigan"))
+    print("Xtts:", voicefixer.get_frechet("xtts"))
+    print("LJSpeech:", voicefixer.get_frechet("ljspeech"))
+    print("Tacotron2:", voicefixer.get_frechet("tacotron"))
+
+    voicefixer = Voicefixer("cpu", audio_features="mfcc")
+    print("Voicefixer (mfcc)")
     print("Reference dev:", voicefixer.get_frechet("reference.dev"))
     print("Parler:", voicefixer.get_frechet("parler"))
     print("Hifigan:", voicefixer.get_frechet("hifigan"))

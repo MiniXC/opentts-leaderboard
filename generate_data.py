@@ -28,7 +28,7 @@ def generate_data(train_ds, device="cuda"):
         return generate_xtts(device)
     if train_ds == "ljspeech":
         return generate_ljspeech_ref()
-    if train_ds == "tacotron":
+    if train_ds == "lj_tacotron2":
         return generate_tacotron(device)
     raise ValueError(f"Unknown dataset {train_ds}")
 
@@ -39,9 +39,17 @@ def generate_ref_test():
     if Path("data/ref_test").exists() and len(list(Path("data/ref_test").glob("*.wav"))) == N_SAMPLES:
         for audio_path in Path("data/ref_test").glob("*.wav"):
             audios.append(str(audio_path))
+            speakers.append(audio_path.name.split("_")[0])
             with open(audio_path.with_suffix(".txt")) as f:
                 texts.append(f.read())
-        return audios, texts
+        if DEV_SUBSET:
+            # randomly sample
+            np.random.seed(42)
+            indices = np.random.choice(range(len(audios)), DEV_SUBSET, replace=False)
+            audios = [audios[i] for i in indices]
+            texts = [texts[i] for i in indices]
+            speakers = [speakers[i] for i in indices]
+        return audios, texts, speakers
     ds = load_dataset(
         "cdminix/libritts-aligned", split="test.clean", trust_remote_code=True
     )
@@ -72,9 +80,17 @@ def generate_ref_dev():
     if Path("data/ref_dev").exists() and len(list(Path("data/ref_dev").glob("*.wav"))) == N_SAMPLES:
         for audio_path in Path("data/ref_dev").glob("*.wav"):
             audios.append(str(audio_path))
+            speakers.append(audio_path.name.split("_")[0])
             with open(audio_path.with_suffix(".txt")) as f:
                 texts.append(f.read())
-        return audios, texts
+        if DEV_SUBSET:
+            # randomly sample
+            np.random.seed(42)
+            indices = np.random.choice(range(len(audios)), DEV_SUBSET, replace=False)
+            audios = [audios[i] for i in indices]
+            texts = [texts[i] for i in indices]
+            speakers = [speakers[i] for i in indices]
+        return audios, texts, speakers
     ds = load_dataset(
         "cdminix/libritts-aligned", split="dev.clean", trust_remote_code=True
     )
@@ -82,7 +98,7 @@ def generate_ref_dev():
     ds = ds.select(range(N_SAMPLES))
     if DEV_SUBSET:
         ds = ds.select(range(DEV_SUBSET))
-    audios, texts, speaker = (
+    audios, texts, speakers = (
         [item["audio"] for item in ds], 
         [item["text"] for item in ds],
         [item["speaker"] for item in ds],
@@ -96,7 +112,7 @@ def generate_ref_dev():
             torchaudio.save(audio_path, audio, sr)
         with open(audio_path.with_suffix(".txt"), "w") as f:
             f.write(text)
-    return audios, texts
+    return audios, texts, speakers
 
 def generate_parler_tts(device="cuda"):
     parler_model = ParlerTTSForConditionalGeneration.from_pretrained("parler-tts/parler_tts_mini_v0.1").to(device)
@@ -104,6 +120,8 @@ def generate_parler_tts(device="cuda"):
     parler_val = load_dataset("parler-tts/libritts_r_tags_tagged_10k_generated", "clean", split="test.clean")
     parler_val = parler_val.shuffle(seed=42)
     parler_val = parler_val.select(range(N_SAMPLES))
+    if DEV_SUBSET:
+        parler_val = parler_val.select(range(DEV_SUBSET))
     Path("data/parler").mkdir(exist_ok=True, parents=True)
     speaker_dict = {}
     results = []
@@ -145,7 +163,7 @@ def generate_hifigan():
     val = val.shuffle(seed=42)
     val = val.select(range(N_SAMPLES))
     if DEV_SUBSET:
-        ds = ds.select(range(DEV_SUBSET))
+        val = val.select(range(DEV_SUBSET))
     for audio in tqdm(val, "generating hifigan"):
         text = audio["text"]
         audio_path = audio["audio"]
@@ -172,7 +190,7 @@ def generate_xtts(device):
     xtts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
     results = []
     text_results = []
-    speakers = []
+    speakers_l = []
     ds = load_dataset(
         "cdminix/libritts-aligned", split="dev.clean", trust_remote_code=True
     )
@@ -181,7 +199,6 @@ def generate_xtts(device):
     val_other = ds.select(range(N_SAMPLES, len(ds)))
     if DEV_SUBSET:
         val = ds.select(range(DEV_SUBSET))
-        val_other = ds.select(range(DEV_SUBSET))
     # unique speakers
     speakers = set()
     speaker_dict = {}
@@ -202,7 +219,7 @@ def generate_xtts(device):
         speaker_dict[speaker_id] = audio_path
     for item in tqdm(val, "generating xtts"):
         data_path = Path("data/xtts") / Path(item["audio"]).name
-        speakers.append(item["speaker"])
+        speakers_l.append(item["speaker"])
         if not data_path.exists():
             xtts.tts_to_file(
                 text=item["text"],
@@ -214,7 +231,7 @@ def generate_xtts(device):
                 f.write(item["text"])
         results.append(data_path)
         text_results.append(item["text"])
-    return results, text_results, speakers
+    return results, text_results, speakers_l
 
 def generate_ljspeech_ref():
     ljspeech = load_dataset("lj_speech", split="train")
@@ -264,4 +281,4 @@ def generate_tacotron(device):
         results.append(data_path)
         text_results.append(item["text"])
         speakers.append("ljspeech")
-    return results, text_results
+    return results, text_results, speakers
