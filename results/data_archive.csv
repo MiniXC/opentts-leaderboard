@@ -1,0 +1,85 @@
+source,measure,value
+reference.dev,General/MFCC,100.0
+parler,General/MFCC,96.922
+hifigan,General/MFCC,99.638
+xtts,General/MFCC,97.928
+ljspeech,General/MFCC,96.124
+lj_tacotron2,General/MFCC,92.534
+amphion_fastspeech2,General/MFCC,96.942
+reference.dev,General/Hubert,100.0
+parler,General/Hubert,99.546
+hifigan,General/Hubert,99.69
+xtts,General/Hubert,98.254
+ljspeech,General/Hubert,99.106
+lj_tacotron2,General/Hubert,96.918
+amphion_fastspeech2,General/Hubert,99.184
+reference.dev,General/Wav2Vec2,100.0
+parler,General/Wav2Vec2,99.054
+hifigan,General/Wav2Vec2,99.574
+xtts,General/Wav2Vec2,99.11600000000001
+ljspeech,General/Wav2Vec2,99.82
+lj_tacotron2,General/Wav2Vec2,97.134
+amphion_fastspeech2,General/Wav2Vec2,99.294
+reference.dev,General/Hubert Units/Lengths,100.0
+parler,General/Hubert Units/Lengths,98.37273991655076
+hifigan,General/Hubert Units/Lengths,93.28233657858136
+xtts,General/Hubert Units/Lengths,92.69819193324061
+ljspeech,General/Hubert Units/Lengths,110.04172461752437
+lj_tacotron2,General/Hubert Units/Lengths,76.77329624478442
+amphion_fastspeech2,General/Hubert Units/Lengths,108.19193324061196
+reference.dev,General/Hubert Units/Counts,100.0
+parler,General/Hubert Units/Counts,97.54954269255869
+hifigan,General/Hubert Units/Counts,98.29454059497891
+xtts,General/Hubert Units/Counts,90.6053700441072
+ljspeech,General/Hubert Units/Counts,96.20264572128681
+lj_tacotron2,General/Hubert Units/Counts,85.94610166996507
+amphion_fastspeech2,General/Hubert Units/Counts,96.40038550810051
+reference.dev,Prosody/MPM,100.0
+parler,Prosody/MPM,98.856
+hifigan,Prosody/MPM,99.712
+xtts,Prosody/MPM,97.046
+ljspeech,Prosody/MPM,94.068
+lj_tacotron2,Prosody/MPM,92.978
+amphion_fastspeech2,Prosody/MPM,93.348
+reference.dev,Speaker/DVector/General,100.0
+parler,Speaker/DVector/General,99.326
+hifigan,Speaker/DVector/General,99.514
+xtts,Speaker/DVector/General,100.21
+ljspeech,Speaker/DVector/General,94.628
+lj_tacotron2,Speaker/DVector/General,96.858
+amphion_fastspeech2,Speaker/DVector/General,82.93399999999998
+reference.dev,Speaker/DVector/Intra,100.0
+parler,Speaker/DVector/Intra,100.162
+hifigan,Speaker/DVector/Intra,100.202
+xtts,Speaker/DVector/Intra,97.242
+ljspeech,Speaker/DVector/Intra,99.802
+lj_tacotron2,Speaker/DVector/Intra,98.81
+amphion_fastspeech2,Speaker/DVector/Intra,99.802
+reference.dev,Speaker/XVector/General,100.0
+parler,Speaker/XVector/General,97.992
+hifigan,Speaker/XVector/General,99.628
+xtts,Speaker/XVector/General,99.996
+ljspeech,Speaker/XVector/General,88.498
+lj_tacotron2,Speaker/XVector/General,88.00199999999998
+amphion_fastspeech2,Speaker/XVector/General,90.436
+reference.dev,Speaker/XVector/Intra,100.0
+parler,Speaker/XVector/Intra,100.086
+hifigan,Speaker/XVector/Intra,100.104
+xtts,Speaker/XVector/Intra,99.88
+ljspeech,Speaker/XVector/Intra,100.182
+lj_tacotron2,Speaker/XVector/Intra,99.55
+amphion_fastspeech2,Speaker/XVector/Intra,100.126
+reference.dev,Environment/Voicefixer,100.0
+parler,Environment/Voicefixer,98.964
+hifigan,Environment/Voicefixer,99.95
+xtts,Environment/Voicefixer,99.786
+ljspeech,Environment/Voicefixer,97.416
+lj_tacotron2,Environment/Voicefixer,97.496
+amphion_fastspeech2,Environment/Voicefixer,98.066
+reference.dev,General/Allosaurus,1.0
+parler,General/Allosaurus,1.0263608912103157
+hifigan,General/Allosaurus,1.01109932261487
+xtts,General/Allosaurus,0.9747175026420616
+reference.dev,Environment/Voicefixer,99.99999999999997
+amphion_fastspeech2,Environment/Voicefixer,97.8523635294286
+reference.dev,General/Allosaurus,

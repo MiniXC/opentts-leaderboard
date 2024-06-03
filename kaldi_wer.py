@@ -17,6 +17,7 @@ import pandas as pd
 from jiwer import wer as wer_score
 import numpy as np
 import builtins
+from generate_data import generate_data
 
 cpus = 16 #cpu_count()
 
@@ -68,47 +69,6 @@ def print(*pargs, **kwargs):
 
 cache_dir = Path("cache")
 cache_dir.mkdir(exist_ok=True)
-
-def prepare_data():
-    for directory in Path("data").iterdir():
-        if directory.is_dir():
-            data_dict = {"speaker": [], "id": [], "wav": [], "text": []}
-            dest = Path(args.local_data_path) / directory.name
-            dest.mkdir(parents=True, exist_ok=True)
-            for wav in directory.rglob("*.wav"):
-                data_dict["speaker"].append(wav.name.split("_")[0])
-                data_dict["id"].append(
-                    wav.name.replace(".wav", "").replace("_", "-")
-                )
-                data_dict["wav"].append(str(wav))
-                with open(str(wav).replace(".wav", ".txt"), "r") as txt:
-                    text = txt.read().upper()
-                    text = " ".join(re.findall(r"\w+\'\w+|\w+", text)).strip()
-                    data_dict["text"].append(text)
-            df = pd.DataFrame(data_dict)
-            # spk2utt
-            with open(Path(dest) / "spk2utt", "w") as spk2utt:
-                for spk in sorted(df["speaker"].unique()):
-                    utts = df[df["speaker"] == spk]["id"].unique()
-                    utts = sorted([f"{utt}" for utt in utts])
-                    spk2utt.write(f'{spk} {" ".join(utts)}\n')
-            # text
-            with open(Path(dest) / "text", "w") as text_file:
-                for utt in sorted(df["id"].unique()):
-                    text = df[df["id"] == utt]["text"].values[0]
-                    text_file.write(f"{utt} {text}\n")
-            # utt2spk
-            with open(Path(dest) / "utt2spk", "w") as utt2spk:
-                for spk in sorted(df["speaker"].unique()):
-                    utts = df[df["speaker"] == spk]["id"].unique()
-                    for utt in sorted(utts):
-                        utt2spk.write(f"{utt} {spk}\n")
-            # wav.scp
-            with open(Path(dest) / "wav.scp", "w") as wavscp:
-                for utt in sorted(df["id"].unique()):
-                    wav = df[df["id"] == utt]["wav"].values[0]
-                    wav = Path(wav).resolve()
-                    wavscp.write(f"{utt} sox {wav} -t wav -c 1 -b 16 -t wav - rate 16000 |\n")
 
 class Tasks:
     def __init__(self, logfile, kaldi_path):
@@ -216,7 +176,7 @@ def score_model(task, args, path, name, test_set, fmllr=False, lang_nosp=True):
             )
         tst = test_set
         graph_test_path = str(graph_path) + f"_{tst}"
-        tst_path = args.local_data_path / tst
+        tst_path = args.local_data_path / "datasets" / tst
         # tst_path = args.local_data_path / (tst + "_med")
         if fmllr:
             p_decode = "_fmllr"
@@ -266,19 +226,6 @@ def score_model(task, args, path, name, test_set, fmllr=False, lang_nosp=True):
         return per_utt_wer
 
 def get_kaldi_wer(args, train_ds, test_ds):
-    prepare_data()
-    if train_ds == "reference.test":
-        train_ds = "ref_test"
-    if test_ds == "reference.test":
-        test_ds = "ref_test"
-    if train_ds == "reference.dev":
-        train_ds = "ref_dev"
-    if test_ds == "reference.dev":
-        test_ds = "ref_dev"
-    if train_ds == "tacotron":
-        train_ds = "ljspeech_tacotron"
-    if test_ds == "tacotron":
-        test_ds = "ljspeech_tacotron"
     if Path(f"cache/{train_ds}_{test_ds}.npy").exists():
         return np.load(f"cache/{train_ds}_{test_ds}.npy")
     task = Tasks(args.log_file, args.kaldi_path)
@@ -300,9 +247,6 @@ def get_kaldi_wer(args, train_ds, test_ds):
     # download lm
     print(f"local/download_lm.sh {args.lm_url} {args.lm_path}")
     task.run(f"local/download_lm.sh {args.lm_url} {args.lm_path}", args.lm_path)
-
-    # prep train data
-    prepare_data()
 
     # create lms
     task.run(
@@ -343,7 +287,42 @@ def get_kaldi_wer(args, train_ds, test_ds):
 
     # mfccs
     for tst in (train_ds, test_ds):
-        tst_path = args.local_data_path / tst
+        tst_path = args.local_data_path / "datasets" / tst
+        if not Path(tst_path).exists() or not Path(tst_path / "feats.scp").exists():
+            # prepare using generate_data
+            audios, texts, speakers = generate_data(tst)
+            dest = Path(args.local_data_path) / "datasets" / tst
+            dest.mkdir(parents=True, exist_ok=True)
+            data_dict = {"speaker": [], "id": [], "wav": [], "text": []}
+            for audio, text, speaker in zip(audios, texts, speakers):
+                data_dict["speaker"].append(speaker)
+                data_dict["id"].append(audio.replace(".wav", "").replace("_", "-"))
+                data_dict["wav"].append(str(audio))
+                data_dict["text"].append(text)
+            df = pd.DataFrame(data_dict)
+            # spk2utt
+            with open(Path(dest) / "spk2utt", "w") as spk2utt:
+                for spk in sorted(df["speaker"].unique()):
+                    utts = df[df["speaker"] == spk]["id"].unique()
+                    utts = sorted([f"{utt}" for utt in utts])
+                    spk2utt.write(f'{spk} {" ".join(utts)}\n')
+            # text
+            with open(Path(dest) / "text", "w") as text_file:
+                for utt in sorted(df["id"].unique()):
+                    text = df[df["id"] == utt]["text"].values[0]
+                    text_file.write(f"{utt} {text}\n")
+            # utt2spk
+            with open(Path(dest) / "utt2spk", "w") as utt2spk:
+                for spk in sorted(df["speaker"].unique()):
+                    utts = df[df["speaker"] == spk]["id"].unique()
+                    for utt in sorted(utts):
+                        utt2spk.write(f"{utt} {spk}\n")
+            # wav.scp
+            with open(Path(dest) / "wav.scp", "w") as wavscp:
+                for utt in sorted(df["id"].unique()):
+                    wav = df[df["id"] == utt]["wav"].values[0]
+                    wav = Path(wav).resolve()
+                    wavscp.write(f"{utt} sox {wav} -t wav -c 1 -b 16 -t wav - rate 16000 |\n")
         exp_path = args.mfcc_path / tst
         task.run(
             f"steps/make_mfcc.sh --cmd {args.train_cmd} --nj {cpus} {tst_path} {exp_path} mfccs",
@@ -354,7 +333,7 @@ def get_kaldi_wer(args, train_ds, test_ds):
             exp_path / f"cmvn_{tst}.log",
         )
 
-    train_path = args.local_data_path / train_ds
+    train_path = args.local_data_path / "datasets" / train_ds
 
     # mono
     mono_data_path = str(train_path)

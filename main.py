@@ -6,178 +6,184 @@ from embedding_models import (
     DVectorIntra, 
     XVector, 
     XVectorIntra,
-    Miipher, 
     Voicefixer, 
     Whisper, 
     Wav2Vec2WER, 
-    ProsodyMPM
+    ProsodyMPM,
+    AllosaurusPhone,
 )
 from kaldi_wer import get_kaldi_wasserstein
 from hubert_units import HubertUnitCounter
 from pathlib import Path
+import pandas as pd
+import numpy as np
+import sys
+from contextlib import contextmanager
+from rich.console import Console
 
-Path("cache").mkdir(exist_ok=True)
-Path("results").mkdir(exist_ok=True)
+console = Console()
+
+@contextmanager
+def suppress_stdout():
+    """A context manager to suppress all stdout output."""
+    class DummyFile(object):
+        def write(self, x): pass
+        def flush(self): pass
+
+    save_stdout = sys.stdout
+    sys.stdout = DummyFile()
+    try:
+        yield
+    finally:
+        sys.stdout = save_stdout
+
+class MeasureChecker:
+    def __init__(self, df, overwrite=False):
+        self.df = df
+        self.overwrite = overwrite
+
+    def check_if_measure_and_source_exists(self, measure, source):
+        if self.overwrite:
+            return False
+        if self.df.empty:
+            return False
+        vals = self.df.loc[(self.df["source"] == source) & (self.df["measure"] == measure)]["value"].values
+        return len(vals) >= 1 and isinstance(vals[0], np.float64)
+
+    def check_if_measure_exists_for_all_sources(self, measure, sources):
+        return all(self.check_if_measure_and_source_exists(measure, source) for source in sources)
+
+    def add_to_df(self, measure, source, value):
+        if self.check_if_measure_and_source_exists(measure, source):
+            return self.df
+        new_entry = pd.DataFrame({
+            "source": [source],
+            "measure": [measure],
+            "value": [value]
+        })
+        self.df = pd.concat([self.df, new_entry], ignore_index=True)
+        self.df.to_csv("results/data.csv", index=False)
+        return self.df
+
+class MeasureProcessor:
+    def __init__(self, sources, measure_checker, overwrite=False):
+        self.sources = sources
+        self.measure_checker = measure_checker
+        self.overwrite = overwrite
+        measure_checker.overwrite = overwrite
+
+    def process_measure(self, console, measure_name, model_class):
+        console.rule(measure_name)
+        if not self.measure_checker.check_if_measure_exists_for_all_sources(measure_name, self.sources) or self.overwrite:
+            if self.overwrite:
+                console.print(f"[bold yellow]Overwriting {measure_name}...[/bold yellow]")
+            else:
+                console.print(f"[bold yellow]{measure_name} not found in cache. Computing...[/bold yellow]")
+            model = model_class()
+            for source in self.sources:
+                if not self.measure_checker.check_if_measure_and_source_exists(measure_name, source):
+                    console.print(f"[yellow]Processing {source} for {measure_name}[/yellow]")
+                    if hasattr(model, "get_frechet"):
+                        self.measure_checker.add_to_df(measure_name, source, model.get_frechet(source, self.overwrite))
+                    elif hasattr(model, "get_wasserstein"):
+                        self.measure_checker.add_to_df(measure_name, source, model.get_wasserstein(source, self.overwrite))
+        else:
+            console.print(f"[bold green]{measure_name} found in cache.[/bold green]")
+
+    def process_hubert_units(self, console):
+        measure_lengths = "General/Hubert Units/Lengths"
+        measure_counts = "General/Hubert Units/Counts"
+        console.rule("General/Hubert Units")
+        if (not self.measure_checker.check_if_measure_exists_for_all_sources(measure_lengths, self.sources) and \
+           not self.measure_checker.check_if_measure_exists_for_all_sources(measure_counts, self.sources)) or self.overwrite:
+            if self.overwrite:
+                console.print(f"[bold yellow]Overwriting {measure_name}...[/bold yellow]")
+            else:
+                console.print(f"[bold yellow]Hubert Units not found in cache. Computing...[/bold yellow]")
+            hubert_units = HubertUnitCounter()
+            for source in self.sources:
+                if not (self.measure_checker.check_if_measure_and_source_exists("General/Hubert Units/Lengths", source) and \
+                     self.measure_checker.check_if_measure_and_source_exists("General/Hubert Units/Counts", source)):
+                    console.print(f"[yellow]Processing {source} for General/Hubert Units[/yellow]")
+                    lengths, counts = hubert_units.get_wasserstein_distances(source)
+                    self.measure_checker.add_to_df(measure_lengths, source, lengths)
+                    self.measure_checker.add_to_df(measure_counts, source, counts)
+        else:
+            console.print(f"[bold green]Hubert Units found in cache.[/bold green]")
+
+    def process_dvector_intra(self, console):
+        measure_name = "Speaker/DVector/Intra"
+        console.rule(measure_name)
+        if not self.measure_checker.check_if_measure_exists_for_all_sources(measure_name, self.sources) or self.overwrite:
+            if self.overwrite:
+                console.print(f"[bold yellow]Overwriting {measure_name}...[/bold yellow]")
+            else:
+                console.print(f"[bold yellow]{measure_name} not found in cache. Computing...[/bold yellow]")
+            for source in self.sources:
+                if not self.measure_checker.check_if_measure_and_source_exists("Speaker/DVector/Intra", source):
+                    console.print(f"[yellow]Processing {source} for {measure_name}[/yellow]")
+                    dvector = DVectorIntra(source)
+                    self.measure_checker.add_to_df(measure_name, source, dvector.get_frechet(source))
+        else:
+            console.print(f"[bold green]{measure_name} found in cache.[/bold green]")
+
+    def process_xvector_intra(self, console):
+        measure_name = "Speaker/XVector/Intra"
+        console.rule(measure_name)
+        if not self.measure_checker.check_if_measure_exists_for_all_sources(measure_name, self.sources) or self.overwrite:
+            if self.overwrite:
+                console.print(f"[bold yellow]Overwriting {measure_name}...[/bold yellow]")
+            else:
+                console.print(f"[bold yellow]{measure_name} not found in cache. Computing...[/bold yellow]")
+            for source in self.sources:
+                if not self.measure_checker.check_if_measure_and_source_exists("Speaker/XVector/Intra", source):
+                    console.print(f"[yellow]Processing {source} for {measure_name}[/yellow]")
+                    xvector = XVectorIntra(source)
+                    self.measure_checker.add_to_df(measure_name, source, xvector.get_frechet(source))
+        else:
+            console.print(f"[bold green]{measure_name} found in cache.[/bold green]")
+
+    def process_kaldi_asr(self, console):
+        measure_name = "Training/Kaldi ASR"
+        console.rule(measure_name)
+        if not self.measure_checker.check_if_measure_exists_for_all_sources(measure_name, self.sources) or self.overwrite:
+            if self.overwrite:
+                console.print(f"[bold yellow]Overwriting {measure_name}...[/bold yellow]")
+            else:
+                console.print(f"[bold yellow]{measure_name} not found in cache. Computing...[/bold yellow]")
+            for source in self.sources:
+                if not self.measure_checker.check_if_measure_and_source_exists("Training/Kaldi ASR", source):
+                    console.print(f"[yellow]Processing {source} for {measure_name}[/yellow]")
+                    self.measure_checker.add_to_df(measure_name, source, get_kaldi_wasserstein(source))
+        else:
+            console.print(f"[bold green]{measure_name} found in cache.[/bold green]")
 
 if __name__ == "__main__":
-    mfcc = MFCC()
-    print("MFCC")
-    print("Reference dev:", mfcc.get_frechet("reference.dev"))
-    print("Parler:", mfcc.get_frechet("parler"))
-    print("Hifigan:", mfcc.get_frechet("hifigan"))
-    print("Xtts:", mfcc.get_frechet("xtts"))
-    print("LJSpeech:", mfcc.get_frechet("ljspeech"))
-    print("Tacotron2:", mfcc.get_frechet("tacotron"))
+    Path("cache").mkdir(exist_ok=True)
+    Path("results").mkdir(exist_ok=True)
 
-    hubert_units = HubertUnitCounter()
-    print("Hubert Units")
-    print("Reference dev:", hubert_units.get_wasserstein_distances("reference.dev"))
-    print("Parler:", hubert_units.get_wasserstein_distances("parler"))
-    print("Hifigan:", hubert_units.get_wasserstein_distances("hifigan"))
-    print("Xtts:", hubert_units.get_wasserstein_distances("xtts"))
-    print("LJSpeech:", hubert_units.get_wasserstein_distances("ljspeech"))
-    print("Tacotron2:", hubert_units.get_wasserstein_distances("lj_tacotron2"))
+    if not Path("results/data.csv").exists():
+        df = pd.DataFrame(columns=["source", "measure", "value"])
+    else:
+        df = pd.read_csv("results/data.csv")
 
-    prosody = ProsodyMPM()
-    print("Prosody")
-    print("Reference dev:", prosody.get_frechet("reference.dev"))
-    print("Parler:", prosody.get_frechet("parler"))
-    print("Hifigan:", prosody.get_frechet("hifigan"))
-    print("Xtts:", prosody.get_frechet("xtts"))
-    print("LJSpeech:", prosody.get_frechet("ljspeech"))
-    print("Tacotron2:", prosody.get_frechet("tacotron"))
+    sources = ["reference.dev", "amphion_fastspeech2", "parler", "hifigan", "xtts", "ljspeech", "lj_tacotron2"]
 
-    print("Kaldi WER")
-    print("Reference dev:", get_kaldi_wasserstein("reference.dev"))
-    print("Parler:", get_kaldi_wasserstein("parler"))
-    print("Hifigan:", get_kaldi_wasserstein("hifigan"))
-    print("Xtts:", get_kaldi_wasserstein("xtts"))
-    print("LJSpeech:", get_kaldi_wasserstein("ljspeech"))
-    print("Tacotron2:", get_kaldi_wasserstein("tacotron"))
+    measure_checker = MeasureChecker(df)
+    measure_processor = MeasureProcessor(sources, measure_checker, overwrite=False)
 
-    mfcc = MFCC()
-    print("MFCC")
-    print("Reference dev:", mfcc.get_frechet("reference.dev"))
-    print("Parler:", mfcc.get_frechet("parler"))
-    print("Hifigan:", mfcc.get_frechet("hifigan"))
-    print("Xtts:", mfcc.get_frechet("xtts"))
-    print("LJSpeech:", mfcc.get_frechet("ljspeech"))
-    print("Tacotron2:", mfcc.get_frechet("tacotron"))
-
-    hubert = Hubert()
-    print("Hubert")
-    print("Reference dev:", hubert.get_frechet("reference.dev"))
-    print("Parler:", hubert.get_frechet("parler"))
-    print("Hifigan:", hubert.get_frechet("hifigan"))
-    print("Xtts:", hubert.get_frechet("xtts"))
-    print("LJSpeech:", hubert.get_frechet("ljspeech"))
-    print("Tacotron2:", hubert.get_frechet("tacotron"))
-
-    wav2vec2 = Wav2Vec2()
-    print("Wav2Vec2")
-    print("Reference dev:", wav2vec2.get_frechet("reference.dev"))
-    print("Parler:", wav2vec2.get_frechet("parler"))
-    print("Hifigan:", wav2vec2.get_frechet("hifigan"))
-    print("Xtts:", wav2vec2.get_frechet("xtts"))
-    print("LJSpeech:", wav2vec2.get_frechet("ljspeech"))
-    print("Tacotron2:", wav2vec2.get_frechet("tacotron"))
-
-    dvector = DVector()
-    print("DVector")
-    print("Reference dev:", dvector.get_frechet("reference.dev"))
-    print("Parler:", dvector.get_frechet("parler"))
-    print("Hifigan:", dvector.get_frechet("hifigan"))
-    print("Xtts:", dvector.get_frechet("xtts"))
-    print("LJSpeech:", dvector.get_frechet("ljspeech"))
-    print("Tacotron2:", dvector.get_frechet("tacotron"))
-
-    print("DVector (Intra)")
-    dvector = DVectorIntra("reference.dev")
-    print("Reference dev:", dvector.get_frechet("reference.dev"))
-    dvector = DVectorIntra("parler")
-    print("Parler:", dvector.get_frechet("parler"))
-    dvector = DVectorIntra("hifigan")
-    print("Hifigan:", dvector.get_frechet("hifigan"))
-    dvector = DVectorIntra("xtts")
-    print("Xtts:", dvector.get_frechet("xtts"))
-    dvector = DVectorIntra("ljspeech")
-    print("LJSpeech:", dvector.get_frechet("ljspeech"))
-    dvector = DVectorIntra("tacotron")
-    print("Tacotron2:", dvector.get_frechet("tacotron"))
-
-    xvector = XVector()
-    print("XVector")
-    print("Reference dev:", xvector.get_frechet("reference.dev"))
-    print("Parler:", xvector.get_frechet("parler"))
-    print("Hifigan:", xvector.get_frechet("hifigan"))
-    print("Xtts:", xvector.get_frechet("xtts"))
-    print("LJSpeech:", xvector.get_frechet("ljspeech"))
-    print("Tacotron2:", xvector.get_frechet("tacotron"))
-
-    print("XVector (Intra)")
-    xvector = XVectorIntra("reference.dev")
-    print("Reference dev:", xvector.get_frechet("reference.dev"))
-    xvector = XVectorIntra("parler")
-    print("Parler:", xvector.get_frechet("parler"))
-    xvector = XVectorIntra("hifigan")
-    print("Hifigan:", xvector.get_frechet("hifigan"))
-    xvector = XVectorIntra("xtts")
-    print("Xtts:", xvector.get_frechet("xtts"))
-    xvector = XVectorIntra("ljspeech")
-    print("LJSpeech:", xvector.get_frechet("ljspeech"))
-    xvector = XVectorIntra("tacotron")
-    print("Tacotron2:", xvector.get_frechet("tacotron"))
-
-    miipher = Miipher(device="cpu", audio_features="hubert", audio_features_device="cuda")
-    print("Miipher (hubert)")
-    print("Reference dev:", miipher.get_frechet("reference.dev"))
-    print("Parler:", miipher.get_frechet("parler"))
-    print("Hifigan:", miipher.get_frechet("hifigan"))
-    print("Xtts:", miipher.get_frechet("xtts"))
-    print("LJSpeech:", miipher.get_frechet("ljspeech"))
-    print("Tacotron2:", miipher.get_frechet("tacotron"))
-
-    miipher = Miipher(device="cpu", audio_features="mfcc")
-    print("Miipher (mfcc)")
-    print("Reference dev:", miipher.get_frechet("reference.dev"))
-    print("Parler:", miipher.get_frechet("parler"))
-    print("Hifigan:", miipher.get_frechet("hifigan"))
-    print("Xtts:", miipher.get_frechet("xtts"))
-    print("LJSpeech:", miipher.get_frechet("ljspeech"))
-    print("Tacotron2:", miipher.get_frechet("tacotron"))
-
-    voicefixer = Voicefixer("cpu", audio_features="hubert", audio_features_device="cuda")
-    print("Voicefixer (hubert)")
-    print("Reference dev:", voicefixer.get_frechet("reference.dev"))
-    print("Parler:", voicefixer.get_frechet("parler"))
-    print("Hifigan:", voicefixer.get_frechet("hifigan"))
-    print("Xtts:", voicefixer.get_frechet("xtts"))
-    print("LJSpeech:", voicefixer.get_frechet("ljspeech"))
-    print("Tacotron2:", voicefixer.get_frechet("tacotron"))
-
-    voicefixer = Voicefixer("cpu", audio_features="mfcc")
-    print("Voicefixer (mfcc)")
-    print("Reference dev:", voicefixer.get_frechet("reference.dev"))
-    print("Parler:", voicefixer.get_frechet("parler"))
-    print("Hifigan:", voicefixer.get_frechet("hifigan"))
-    print("Xtts:", voicefixer.get_frechet("xtts"))
-    print("LJSpeech:", voicefixer.get_frechet("ljspeech"))
-    print("Tacotron2:", voicefixer.get_frechet("tacotron"))
-
-    whisper = Whisper()
-    print("Whisper")
-    print("Reference dev:", whisper.get_wasserstein("reference.dev"))
-    print("Parler:", whisper.get_wasserstein("parler"))
-    print("Hifigan:", whisper.get_wasserstein("hifigan"))
-    print("Xtts:", whisper.get_wasserstein("xtts"))
-    print("LJSpeech:", whisper.get_wasserstein("ljspeech"))
-    print("Tacotron2:", whisper.get_wasserstein("tacotron"))
-
-    wav2vec2_wer = Wav2Vec2WER()
-    print("Wav2Vec2WER")
-    print("Reference dev:", wav2vec2_wer.get_wasserstein("reference.dev"))
-    print("Parler:", wav2vec2_wer.get_wasserstein("parler"))
-    print("Hifigan:", wav2vec2_wer.get_wasserstein("hifigan"))
-    print("Xtts:", wav2vec2_wer.get_wasserstein("xtts"))
-    print("LJSpeech:", wav2vec2_wer.get_wasserstein("ljspeech"))
-    print("Tacotron2:", wav2vec2_wer.get_wasserstein("tacotron"))
+    measure_processor.process_measure(console, "General/Allosaurus", AllosaurusPhone)
+    measure_processor.process_measure(console, "Environment/Voicefixer", Voicefixer)
+    measure_processor.process_measure(console, "General/MFCC", MFCC)
+    measure_processor.process_measure(console, "General/Hubert", Hubert)
+    measure_processor.process_measure(console, "General/Wav2Vec2", Wav2Vec2)
+    measure_processor.process_hubert_units(console)
+    measure_processor.process_measure(console, "Prosody/MPM", ProsodyMPM)
+    measure_processor.process_measure(console, "Speaker/DVector/General", DVector)
+    measure_processor.process_dvector_intra(console)
+    measure_processor.process_measure(console, "Speaker/XVector/General", XVector)
+    measure_processor.process_xvector_intra(console)
+    measure_processor.process_measure(console, "Environment/Voicefixer", Voicefixer)
+    measure_processor.process_measure(console, "Intelligibility/Whisper", Whisper)
+    measure_processor.process_measure(console, "Intelligibility/Wav2Vec2", Wav2Vec2WER)
+    measure_processor.process_kaldi_asr(console)

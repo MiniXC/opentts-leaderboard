@@ -50,8 +50,12 @@ class HubertUnitCounter:
             }
             return unit_counts, unit_lengths
         audios, _, _ = generate_data(ds)
-        unit_counts = {}
-        unit_lengths = {}
+        unit_counts = {
+            i: 0 for i in range(100)
+        }
+        unit_lengths = {
+            i: [] for i in range(100)
+        }
         for audio in tqdm(audios, desc=f"Counting units for {ds}"):
             audio, sr = torchaudio.load(audio)
             audio = torchaudio.transforms.Resample(sr, 16000)(audio)
@@ -88,54 +92,137 @@ class HubertUnitCounter:
         return unit_counts, unit_lengths
 
     def get_wasserstein_distances(self, ds):
-        test_c, test_l = self.count_units("reference.test")
-        dev_c, dev_l = self.count_units("reference.dev")
-        ds_c, ds_l = self.count_units(ds)
-        all_test_lengths = [
-            item for sublist in test_l.values() for item in sublist
-        ]
-        all_dev_lengths = [
-            item for sublist in dev_l.values() for item in sublist
-        ]
-        all_ds_lengths = [
-            item for sublist in ds_l.values() for item in sublist
-        ]
-        all_test_lengths = np.array(all_test_lengths)
-        all_dev_lengths = np.array(all_dev_lengths)
-        all_ds_lengths = np.array(all_ds_lengths)
-        # take a random sample of whichever is the smallest
-        min_length = min(len(all_test_lengths), len(all_dev_lengths), len(all_ds_lengths))
-        np.random.seed(42)
-        all_test_lengths = np.random.choice(all_test_lengths, min_length)
-        np.random.seed(42)
-        all_dev_lengths = np.random.choice(all_dev_lengths, min_length)
-        np.random.seed(42)
-        all_ds_lengths = np.random.choice(all_ds_lengths, min_length)
-        all_test_lengths = np.sort(all_test_lengths)
-        all_dev_lengths = np.sort(all_dev_lengths)
-        all_ds_lengths = np.sort(all_ds_lengths)
-        mean_length_repeated = np.ones_like(all_test_lengths) * np.mean(all_test_lengths)
-        best_wasserstein = np.abs(all_test_lengths - all_dev_lengths).mean()
-        worst_wassterstein = np.abs(all_test_lengths - mean_length_repeated).mean()
-        length_wasserstein = np.abs(all_ds_lengths - all_test_lengths).mean()
-        # scale so that 100 is best_wasserstein and 0 is worst_wasserstein
-        length_wasserstein = (1 - (length_wasserstein - best_wasserstein) / (worst_wassterstein - best_wasserstein)) * 100
-        all_test_counts = np.array([
-            test_c[i] for i in range(100)
-        ])
-        all_dev_counts = np.array([
-            dev_c[i] for i in range(100)
-        ])
-        all_ds_counts = np.array([
-            ds_c[i] for i in range(100)
-        ])
-        all_test_counts = np.sort(all_test_counts)
-        all_dev_counts = np.sort(all_dev_counts)
-        all_ds_counts = np.sort(all_ds_counts)
-        mean_unit_values = np.ones_like(all_test_counts) * np.mean(all_test_counts)
-        best_wasserstein = np.abs(all_test_counts - all_dev_counts).mean()
-        worst_wassterstein = np.abs(all_test_counts - mean_unit_values).mean()
-        unit_wasserstein = np.abs(all_ds_counts - all_test_counts).mean()
-        # scale so that 100 is best_wasserstein and 0 is worst_wasserstein
-        unit_wasserstein = (1 - (unit_wasserstein - best_wasserstein) / (worst_wassterstein - best_wasserstein)) * 100
-        return length_wasserstein, unit_wasserstein
+        # test_c, test_l = self.count_units("reference.test")
+        # dev_c, dev_l = self.count_units("reference.dev")
+        # ds_c, ds_l = self.count_units(ds)
+        # noise_c, noise_l = self.count_units("noise")
+        # all_test_lengths = [
+        #     item for sublist in test_l.values() for item in sublist
+        # ]
+        # all_dev_lengths = [
+        #     item for sublist in dev_l.values() for item in sublist
+        # ]
+        # all_ds_lengths = [
+        #     item for sublist in ds_l.values() for item in sublist
+        # ]
+        # all_noise_lengths = [
+        #     item for sublist in noise_l.values() for item in sublist
+        # ]
+        # all_test_lengths = np.array(all_test_lengths)
+        # all_dev_lengths = np.array(all_dev_lengths)
+        # all_ds_lengths = np.array(all_ds_lengths)
+        # all_noise_lengths = np.array(all_noise_lengths)
+        # # take a random sample of whichever is the smallest
+        # min_length = min(len(all_test_lengths), len(all_dev_lengths), len(all_ds_lengths), len(all_noise_lengths))
+        # np.random.seed(42)
+        # all_test_lengths = np.random.choice(all_test_lengths, min_length)
+        # np.random.seed(42)
+        # all_dev_lengths = np.random.choice(all_dev_lengths, min_length)
+        # np.random.seed(42)
+        # all_ds_lengths = np.random.choice(all_ds_lengths, min_length)
+        # np.random.seed(42)
+        # all_noise_lengths = np.random.choice(all_noise_lengths, min_length)
+
+        # all_test_lengths = np.sort(all_test_lengths)
+        # all_dev_lengths = np.sort(all_dev_lengths)
+        # all_ds_lengths = np.sort(all_ds_lengths)
+        # all_noise_lengths = np.sort(all_noise_lengths)
+        
+        
+        # best_wasserstein = np.abs(all_test_lengths - all_dev_lengths).mean()
+        # worst_wassterstein = np.abs(all_test_lengths - all_noise_lengths).mean()
+        # length_wasserstein = np.abs(all_ds_lengths - all_test_lengths).mean()
+        # # scale so that 100 is best_wasserstein and 0 is worst_wasserstein
+        # length_wasserstein = (1 - (length_wasserstein - best_wasserstein) / (worst_wassterstein - best_wasserstein)) * 100
+        # all_test_counts = np.array([
+        #     test_c[i] if i in test_c else 0 for i in range(100)
+        # ])
+        # all_dev_counts = np.array([
+        #     dev_c[i] if i in dev_c else 0 for i in range(100)
+        # ])
+        # all_ds_counts = np.array([
+        #     ds_c[i] if i in ds_c else 0 for i in range(100)
+        # ])
+        # all_noise_counts = np.array([
+        #     noise_c[i] if i in noise_c else 0 for i in range(100)
+        # ])
+        # all_test_counts = np.sort(all_test_counts)
+        # all_dev_counts = np.sort(all_dev_counts)
+        # all_ds_counts = np.sort(all_ds_counts)
+        # all_noise_counts = np.sort(all_noise_counts)
+        # best_wasserstein = np.abs(all_test_counts - all_dev_counts).mean()
+        # worst_wassterstein = np.abs(all_test_counts - all_noise_counts).mean()
+        # unit_wasserstein = np.abs(all_ds_counts - all_test_counts).mean()
+        # # scale so that 100 is best_wasserstein and 0 is worst_wasserstein
+        # unit_wasserstein = (1 - (unit_wasserstein - best_wasserstein) / (worst_wassterstein - best_wasserstein)) * 100
+        # return length_wasserstein, unit_wasserstein
+
+        # same with 5 test sets
+        results = []
+        for k in range(5):
+            test_c, test_l = self.count_units(f"reference.test.{k}")
+            dev_c, dev_l = self.count_units("reference.dev")
+            ds_c, ds_l = self.count_units(ds)
+            noise_c, noise_l = self.count_units("noise")
+            all_test_lengths = [
+                item for sublist in test_l.values() for item in sublist
+            ]
+            all_dev_lengths = [
+                item for sublist in dev_l.values() for item in sublist
+            ]
+            all_ds_lengths = [
+                item for sublist in ds_l.values() for item in sublist
+            ]
+            all_noise_lengths = [
+                item for sublist in noise_l.values() for item in sublist
+            ]
+            all_test_lengths = np.array(all_test_lengths)
+            all_dev_lengths = np.array(all_dev_lengths)
+            all_ds_lengths = np.array(all_ds_lengths)
+            all_noise_lengths = np.array(all_noise_lengths)
+            # take a random sample of whichever is the smallest
+            min_length = min(len(all_test_lengths), len(all_dev_lengths), len(all_ds_lengths), len(all_noise_lengths))
+            np.random.seed(42)
+            all_test_lengths = np.random.choice(all_test_lengths, min_length)
+            np.random.seed(42)
+            all_dev_lengths = np.random.choice(all_dev_lengths, min_length)
+            np.random.seed(42)
+            all_ds_lengths = np.random.choice(all_ds_lengths, min_length)
+            np.random.seed(42)
+            all_noise_lengths = np.random.choice(all_noise_lengths, min_length)
+
+            all_test_lengths = np.sort(all_test_lengths)
+            all_dev_lengths = np.sort(all_dev_lengths)
+            all_ds_lengths = np.sort(all_ds_lengths)
+            all_noise_lengths = np.sort(all_noise_lengths)
+            
+            
+            best_wasserstein = ((all_test_lengths - all_dev_lengths)**2).mean()**0.5
+            worst_wassterstein = ((all_test_lengths - all_noise_lengths)**2).mean()**0.5
+            length_wasserstein = ((all_ds_lengths - all_test_lengths)**2).mean()**0.5
+            # scale so that 100 is best_wasserstein and 0 is worst_wasserstein
+            length_wasserstein = (1 - (length_wasserstein - best_wasserstein) / (worst_wassterstein - best_wasserstein)) * 100
+            all_test_counts = np.array([
+                test_c[i] if i in test_c else 0 for i in range(100)
+            ])
+            all_dev_counts = np.array([
+                dev_c[i] if i in dev_c else 0 for i in range(100)
+            ])
+            all_ds_counts = np.array([
+                ds_c[i] if i in ds_c else 0 for i in range(100)
+            ])
+            all_noise_counts = np.array([
+                noise_c[i] if i in noise_c else 0 for i in range(100)
+            ])
+            all_test_counts = np.sort(all_test_counts)
+            all_dev_counts = np.sort(all_dev_counts)
+            all_ds_counts = np.sort(all_ds_counts)
+            all_noise_counts = np.sort(all_noise_counts)
+            best_wasserstein = ((all_test_counts - all_dev_counts)**2).mean()**0.5
+            worst_wassterstein = ((all_test_counts - all_noise_counts)**2).mean()**0.5
+            unit_wasserstein = ((all_ds_counts - all_test_counts)**2).mean()**0.5
+            # scale so that 100 is best_wasserstein and 0 is worst_wasserstein
+            unit_wasserstein = (1 - (unit_wasserstein - best_wasserstein) / (worst_wassterstein - best_wasserstein)) * 100
+            results.append((length_wasserstein, unit_wasserstein))
+
+        return np.mean(results, axis=0)

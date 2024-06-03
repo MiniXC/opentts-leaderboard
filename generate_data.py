@@ -9,15 +9,19 @@ from parler_tts import ParlerTTSForConditionalGeneration
 from simple_hifigan import Synthesiser
 from TTS.api import TTS
 import numpy as np
+from subprocess import run as _run
 
 N_SAMPLES = 1000
 DEV_SUBSET = 100
 
+def run(cmd):
+    return _run(cmd, shell=True)
+
 def generate_data(train_ds, device="cuda"):
     if not Path("data").exists():
         Path("data").mkdir()
-    if train_ds in ["ref_test", "reference.test"]:
-        return generate_ref_test()
+    if train_ds in ["ref_test", "reference.test"] or "reference.test" in train_ds:
+        return generate_ref_test(train_ds.replace("reference.test", "").replace(".", ""))
     if train_ds in ["ref_dev", "reference.dev"]:
         return generate_ref_dev()
     if train_ds == "parler":
@@ -30,12 +34,44 @@ def generate_data(train_ds, device="cuda"):
         return generate_ljspeech_ref()
     if train_ds == "lj_tacotron2":
         return generate_tacotron(device)
+    if train_ds == "amphion_fastspeech2":
+        return generate_amphion_fastspeech2()
+    if train_ds == "noise":
+        return generate_noise()
     raise ValueError(f"Unknown dataset {train_ds}")
 
-def generate_ref_test():
+def generate_noise():
+    noise = ds = load_dataset(
+        "cdminix/libritts-aligned", split="dev.clean", trust_remote_code=True
+    )
+    noise = noise.shuffle(seed=42)
+    noise = noise.select(range(N_SAMPLES))
+    if DEV_SUBSET:
+        noise = noise.select(range(DEV_SUBSET))
+    Path("data/noise").mkdir(exist_ok=True, parents=True)
+    results = []
+    text_results = []
+    speakers = []
+    for item in tqdm(noise, "generating noise"):
+        data_path = Path("data/noise") / Path(item["audio"]).name
+        if not data_path.exists():
+            _audio, _sr = torchaudio.load(item["audio"])
+            audio = torch.randn_like(_audio)
+            torchaudio.save(data_path, audio, _sr)
+            with open(data_path.with_suffix(".txt"), "w") as f:
+                f.write("noise")
+        results.append(data_path)
+        text_results.append("noise")
+        speakers.append("noise")
+    return results, text_results, speakers
+
+def generate_ref_test(num):
     audios = []
     texts = []
     speakers = []
+    if len(num) > 0:
+        num = int(num)
+        np.random.seed(num)
     if Path("data/ref_test").exists() and len(list(Path("data/ref_test").glob("*.wav"))) == N_SAMPLES:
         for audio_path in Path("data/ref_test").glob("*.wav"):
             audios.append(str(audio_path))
@@ -44,7 +80,6 @@ def generate_ref_test():
                 texts.append(f.read())
         if DEV_SUBSET:
             # randomly sample
-            np.random.seed(42)
             indices = np.random.choice(range(len(audios)), DEV_SUBSET, replace=False)
             audios = [audios[i] for i in indices]
             texts = [texts[i] for i in indices]
@@ -53,7 +88,7 @@ def generate_ref_test():
     ds = load_dataset(
         "cdminix/libritts-aligned", split="test.clean", trust_remote_code=True
     )
-    ds = ds.shuffle(seed=42)
+    ds = ds.shuffle()
     ds = ds.select(range(N_SAMPLES))
     if DEV_SUBSET:
         ds = ds.select(range(DEV_SUBSET))
@@ -276,6 +311,92 @@ def generate_tacotron(device):
                 text=item["text"],
                 file_path=str(data_path),
             )
+            with open(data_path.with_suffix(".txt"), "w") as f:
+                f.write(item["text"])
+        results.append(data_path)
+        text_results.append(item["text"])
+        speakers.append("ljspeech")
+    return results, text_results, speakers
+
+def generate_amphion_fastspeech2():
+    Path("data/amphion_fastspeech2").mkdir(exist_ok=True, parents=True)
+    Path("amphion").mkdir(exist_ok=True)
+    results = []
+    text_results = []
+    speakers = []
+    if not Path("amphion/amphion_fastspeech2").exists():
+        run("git lfs install")
+        run("git clone https://huggingface.co/amphion/fastspeech2_ljspeech amphion/amphion_fastspeech2")
+    if not Path("amphion/amphion_hifigan").exists():
+        run("git clone https://huggingface.co/amphion/hifigan_ljspeech amphion/amphion_hifigan")
+        run("cp amphion/amphion_hifigan/args.json amphion/amphion_hifigan/checkpoints/args.json")
+    if not Path("amphion/amphion").exists():
+        run("git clone https://github.com/open-mmlab/Amphion.git amphion/amphion")
+    run("rm -rf amphion/amphion/ckpts/tts")
+    run("mkdir -p amphion/amphion/ckpts/tts")
+    abs_path = Path("amphion/amphion_fastspeech2").resolve()
+    abs_path_hifigan = Path("amphion/amphion_hifigan").resolve()
+    run(f"ln -s {abs_path} amphion/amphion/ckpts/tts/")
+    run(f"rm -rf amphion/amphion/ckpts/vocoder")
+    run(f"mkdir -p amphion/amphion/ckpts/vocoder")
+    run(f"ln -s {abs_path_hifigan} amphion/amphion/ckpts/vocoder/")
+    if not Path("amphion/amphion/ckpts/tts/fastspeech").exists():
+        run("mkdir -p amphion/amphion/ckpts/tts/fastspeech")
+        run(f"ln -s {abs_path}/LJSpeech amphion/amphion/ckpts/tts/fastspeech/")
+    amphion_dir = Path("amphion/amphion").resolve()
+    ds = load_dataset(
+        "cdminix/libritts-aligned", split="dev.clean", trust_remote_code=True
+    )
+    ds = ds.shuffle(seed=42)
+    ds = ds.select(range(N_SAMPLES))
+    if DEV_SUBSET:
+        ds = ds.select(range(DEV_SUBSET))
+    for item in tqdm(ds, "generating amphion fastspeech2"):
+        data_path = Path("data/amphion_fastspeech2") / Path(item["audio"]).name
+        if not data_path.exists():
+            run(f'sh {amphion_dir}/egs/tts/FastSpeech2/run.sh --stage 3 \
+            --config {amphion_dir}/ckpts/tts/amphion_fastspeech2/args.json \
+            --infer_expt_dir {amphion_dir}/ckpts/tts/amphion_fastspeech2/ \
+            --infer_output_dir {amphion_dir}/ckpts/tts/amphion_fastspeech2/results \
+            --infer_mode single \
+            --infer_text "{item["text"]}" \
+            --vocoder_dir {amphion_dir}/ckpts/vocoder/amphion_hifigan/checkpoints/ \
+            ')
+            run(f"mv {amphion_dir}/ckpts/tts/amphion_fastspeech2/results/single/test_pred.wav {data_path}")
+            run(f"rm -rf {amphion_dir}/ckpts/tts/amphion_fastspeech2/results/single")
+            with open(data_path.with_suffix(".txt"), "w") as f:
+                f.write(item["text"])
+        results.append(data_path)
+        text_results.append(item["text"])
+        speakers.append("ljspeech")
+    return results, text_results, speakers
+
+def generate_valle():
+    Path("data/valle").mkdir(exist_ok=True, parents=True)
+    results = []
+    text_results = []
+    speakers = []
+    if not Path("amphion/amphion_valle").exists():
+        run("git lfs install")
+        run("git clone https://huggingface.co/amphion/fastspeech2_ljspeech amphion/amphion_valle")
+    if not Path("amphion/amphion").exists():
+        run("git clone https://github.com/open-mmlab/Amphion.git amphion/amphion")
+    run("rm -rf amphion/amphion/ckpts/tts")
+    run("mkdir -p amphion/amphion/ckpts/tts")
+    abs_path = Path("amphion/amphion_valle").resolve()
+    run(f"ln -s {abs_path} amphion/amphion/ckpts/tts/")
+    # TODO: finish using https://huggingface.co/amphion/valle_libritts
+    ds = load_dataset(
+        "cdminix/libritts-aligned", split="dev.clean", trust_remote_code=True
+    )
+    ds = ds.shuffle(seed=42)
+    ds = ds.select(range(N_SAMPLES))
+    if DEV_SUBSET:
+        ds = ds.select(range(DEV_SUBSET))
+    for item in tqdm(ds, "generating valle"):
+        data_path = Path("data/valle") / Path(item["audio"]).name
+        if not data_path.exists():
+            run(f"python valle/valle.py --text '{item['text']}' --output {data_path}")
             with open(data_path.with_suffix(".txt"), "w") as f:
                 f.write(item["text"])
         results.append(data_path)

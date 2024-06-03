@@ -8,7 +8,7 @@ def frechet_distance(mu1, sigma1, mu2, sigma2, eps=1e-6):
 
     mu1 = np.atleast_1d(mu1)
     mu2 = np.atleast_1d(mu2)
-
+    
     sigma1 = np.atleast_2d(sigma1)
     sigma2 = np.atleast_2d(sigma2)
 

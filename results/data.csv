@@ -1,0 +1,12 @@
+source,measure,value
+reference.dev,General/Allosaurus,100.0
+amphion_fastspeech2,General/Allosaurus,99.837771662378798965
+parler,General/Allosaurus,99.71364512779317124
+hifigan,General/Allosaurus,99.78055263775182482
+xtts,General/Allosaurus,99.1117904686164195
+ljspeech,General/Allosaurus,97.72435350349765315
+lj_tacotron2,General/Allosaurus,96.39321275509442444
+reference.dev,Environment/Voicefixer,99.99999999999997158
+amphion_fastspeech2,Environment/Voicefixer,98.358311633088121084
+parler,Environment/Voicefixer,97.8714533091003176
+hifigan,Environment/Voicefixer,99.8308655735641679
